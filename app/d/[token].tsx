@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { supabase } from '@/lib/supabase';
+import { buildSpdPayload, czechIBAN } from '@/lib/czech-qr-payment';
 
 /**
  * The public, no-login debt share page — matches DebtorShare.dc.html.
@@ -15,8 +17,10 @@ import { supabase } from '@/lib/supabase';
  * supabase/migrations/0002_public_debt_share.sql — no auth session
  * involved, matching how architecture-v1.md describes this route.
  *
- * TODO(Phase 1): real Czech SPD QR code render (reuse PaymentService logic
- * ported from the old app) — not yet wired here, this proves the data path.
+ * Renders a real Czech "QR Platba" payment code (lib/czech-qr-payment.ts)
+ * when the target account has enough fields to build an IBAN from — falls
+ * back to just the amount/description if a bank_code is missing (e.g. a
+ * CASH account was picked as the target).
  * TODO(Phase 4 / localization pass): auto-detect device language + manual
  * switch, per screens-and-flows.md "Localization" — English-only for now.
  */
@@ -61,6 +65,15 @@ export default function DebtorSharePage() {
     load();
   }
 
+  const qrPayload =
+    debt && debt.target_bank_code && debt.target_account_number
+      ? buildSpdPayload({
+          iban: czechIBAN(debt.target_bank_code, debt.target_account_number, debt.target_account_prefix),
+          amount: debt.amount,
+          message: debt.description,
+        })
+      : null;
+
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
       <View style={styles.header}>
@@ -93,6 +106,25 @@ export default function DebtorSharePage() {
             {debt.amount}
             <Text style={{ color: tokens.textMuted, fontSize: 20, fontFamily: fontFamily.medium }}> CZK</Text>
           </Text>
+
+          {debt.status === 'OUTSTANDING' && qrPayload && (
+            <View style={[styles.qrBox, { backgroundColor: tokens.cardAlt, borderColor: tokens.border }]}>
+              <View style={styles.qrWhite}>
+                <QRCode value={qrPayload} size={168} />
+              </View>
+              <Text
+                style={{
+                  color: tokens.textMuted,
+                  fontFamily: fontFamily.medium,
+                  fontSize: 12,
+                  marginTop: 10,
+                  textAlign: 'center',
+                }}
+              >
+                Scan with your banking app to pay
+              </Text>
+            </View>
+          )}
 
           <View style={{ flex: 1 }} />
 
@@ -140,4 +172,6 @@ const styles = StyleSheet.create({
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   primaryBtn: { width: '100%', paddingVertical: 17, borderRadius: 16, alignItems: 'center' },
   claimedBox: { width: '100%', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
+  qrBox: { alignItems: 'center', padding: 18, borderRadius: 18, borderWidth: 1, marginTop: 22 },
+  qrWhite: { backgroundColor: '#ffffff', padding: 12, borderRadius: 10 },
 });

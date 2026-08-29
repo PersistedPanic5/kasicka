@@ -22,6 +22,16 @@
  * by bisecting a minimal repro down to a single trivial table. 2.55.0 is
  * the last version before that broke. Don't bump this dependency without
  * re-testing `supabase.rpc(...)` against a schema with real Tables first.
+ *
+ * Fixed in the Phase 1 auth pass: every owner-scoped table (accounts,
+ * categories, monthly_budgets, transactions, recurring_items,
+ * long_term_items, debts) is `owner_id uuid not null` in the real schema
+ * with no default/trigger — the client must always set it explicitly to
+ * auth.uid(). The original hand-written Row types omitted `owner_id`
+ * entirely, which silently made every insert here type-check while still
+ * failing the real NOT NULL constraint at runtime. Now present on every
+ * Row/Insert type below — don't drop it again when this file is eventually
+ * replaced by `supabase gen types`.
  */
 
 export type AccountType = 'BANK' | 'CASH' | 'SAVINGS' | 'RESERVE' | 'CARD';
@@ -54,6 +64,7 @@ export type ProfileUpdate = Partial<Profile>;
 
 export interface Account {
   id: string;
+  owner_id: string;
   name: string;
   account_type: AccountType;
   account_prefix: string | null;
@@ -63,32 +74,35 @@ export interface Account {
   active: boolean;
   created_at: string;
 }
-export type AccountInsert = Partial<Account> & Pick<Account, 'name' | 'account_type'>;
+export type AccountInsert = Partial<Account> & Pick<Account, 'owner_id' | 'name' | 'account_type'>;
 export type AccountUpdate = Partial<Account>;
 
 export interface Category {
   id: string;
+  owner_id: string;
   name: string;
   category_type: CategoryType;
   default_monthly_budget: number;
   sort_order: number;
   active: boolean;
 }
-export type CategoryInsert = Partial<Category> & Pick<Category, 'name' | 'category_type'>;
+export type CategoryInsert = Partial<Category> & Pick<Category, 'owner_id' | 'name' | 'category_type'>;
 export type CategoryUpdate = Partial<Category>;
 
 export interface MonthlyBudget {
   id: string;
+  owner_id: string;
   budget_month: string; // 'yyyy-mm-01'
   category_id: string;
   planned_amount: number;
 }
 export type MonthlyBudgetInsert = Partial<MonthlyBudget> &
-  Pick<MonthlyBudget, 'budget_month' | 'category_id' | 'planned_amount'>;
+  Pick<MonthlyBudget, 'owner_id' | 'budget_month' | 'category_id' | 'planned_amount'>;
 export type MonthlyBudgetUpdate = Partial<MonthlyBudget>;
 
 export interface Transaction {
   id: string;
+  owner_id: string;
   budget_month: string;
   transaction_date: string;
   type: TransactionType;
@@ -103,11 +117,12 @@ export interface Transaction {
   updated_at: string;
 }
 export type TransactionInsert = Partial<Transaction> &
-  Pick<Transaction, 'transaction_date' | 'type' | 'account_id' | 'amount'>;
+  Pick<Transaction, 'owner_id' | 'budget_month' | 'transaction_date' | 'type' | 'account_id' | 'amount'>;
 export type TransactionUpdate = Partial<Transaction>;
 
 export interface RecurringItem {
   id: string;
+  owner_id: string;
   name: string;
   category_id: string;
   account_id: string;
@@ -117,11 +132,12 @@ export interface RecurringItem {
   active: boolean;
 }
 export type RecurringItemInsert = Partial<RecurringItem> &
-  Pick<RecurringItem, 'name' | 'category_id' | 'account_id' | 'amount' | 'frequency' | 'day_of_month'>;
+  Pick<RecurringItem, 'owner_id' | 'name' | 'category_id' | 'account_id' | 'amount' | 'frequency' | 'day_of_month'>;
 export type RecurringItemUpdate = Partial<RecurringItem>;
 
 export interface LongTermItem {
   id: string;
+  owner_id: string;
   name: string;
   category_id: string;
   full_payment_amount: number;
@@ -142,24 +158,29 @@ export interface LongTermItem {
   active: boolean;
 }
 export type LongTermItemInsert = Partial<LongTermItem> &
-  Pick<LongTermItem, 'name' | 'category_id' | 'full_payment_amount' | 'payment_month' | 'first_reserve_month' | 'reserve_amount_mode'>;
+  Pick<LongTermItem, 'owner_id' | 'name' | 'category_id' | 'full_payment_amount' | 'payment_month' | 'first_reserve_month' | 'reserve_amount_mode'>;
 export type LongTermItemUpdate = Partial<LongTermItem>;
 
 export interface Debt {
   id: string;
+  owner_id: string;
   transaction_id: string;
   owed_by_name: string;
   amount: number;
   target_account_id: string;
   status: DebtStatus;
   share_token: string;
+  /** Shown on the public share link / used as the QR payment message —
+   * see supabase/migrations/0003_debt_message.sql. Falls back to the
+   * linked transaction's own note, then the category name, when unset. */
+  message: string | null;
   claimed_paid_at: string | null;
   settled_at: string | null;
   settlement_transaction_id: string | null;
   created_at: string;
 }
 export type DebtInsert = Partial<Debt> &
-  Pick<Debt, 'transaction_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;
+  Pick<Debt, 'owner_id' | 'transaction_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;
 export type DebtUpdate = Partial<Debt>;
 
 /** Shape returned by the public `get_debt_by_share_token` RPC — see 0002. */

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
-import { fontFamily, CATEGORY_NAMES } from '@/lib/theme';
+import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth-context';
+import { useAppData } from '@/lib/use-app-data';
 
 /**
  * The fast expense-capture form — the single most important screen in the
@@ -11,20 +13,44 @@ import { supabase } from '@/lib/supabase';
  * via the `variant` prop, so the core action never has two implementations
  * to keep in sync.
  *
- * Phase 0 scope: amount, quick-add chips, category chips, ±1 day shift,
- * save. Deliberately NOT yet built here (arriving with real backend wiring
- * in Phase 1, see build-roadmap-v1.md): the collapsed "more options" panel
- * (account/note/photo) and the "split part of this with someone" debt
- * panel. Save currently inserts a minimal row and will need a real
- * account_id/category_id once accounts/categories exist per-user.
+ * Phase 1: real save, a note field, plus the "split part of this with
+ * someone" debt panel (debts-ledger-requirements.md "Mechanism") — the
+ * full transaction amount is always what actually left your account and
+ * counts as spend; the split amount just additionally creates a `debts`
+ * row against the same transaction, pointing at the debtor's own
+ * shareable link (app/d/[token].tsx). The note travels two ways: it's
+ * shown as the transaction's own label (app/(app)/transactions.tsx), and
+ * — via get_debt_by_share_token's fallback order (see
+ * supabase/migrations/0003_debt_message.sql) — becomes the debt's public
+ * description/QR message too, unless the split panel's own "message"
+ * field overrides it for that debt specifically. account_id/category_id
+ * come from useAppData (the signed-in user's bootstrap-created default
+ * account + expense categories — see lib/bootstrap.ts). Still not built
+ * here: the collapsed "more options" panel (account/photo) — later
+ * Phase 1 work per build-roadmap-v1.md.
  */
 export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 'desktop' }) {
   const { tokens } = useTheme();
+  const { user } = useAuth();
+  const { defaultAccountId, categories, loading: dataLoading } = useAppData();
+
   const [amount, setAmount] = useState('');
-  const [category, setCategory] = useState<string>(CATEGORY_NAMES[0]);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [dayOffset, setDayOffset] = useState(0);
+  const [note, setNote] = useState('');
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  const [splitName, setSplitName] = useState('');
+  const [splitAmount, setSplitAmount] = useState('');
+  const [splitMessage, setSplitMessage] = useState('');
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  // Categories load asynchronously right after sign-in (first-run
+  // bootstrap creates them) — default to the first one once they arrive.
+  const activeCategoryId = categoryId ?? categories[0]?.id ?? null;
 
   const quickAmounts = [20, 50, 100, 200]; // TODO: profile.amount_buttons (More → Profile)
 
@@ -35,28 +61,106 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     return dayOffset > 0 ? `+${dayOffset} days` : `${dayOffset} days`;
   }, [dayOffset]);
 
+  function shiftedDateISO(offset: number) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return d.toISOString().slice(0, 10);
+  }
+
+  function linkForToken(token: string) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      return `${window.location.origin}/d/${token}`;
+    }
+    return `/d/${token}`;
+  }
+
   async function handleSave() {
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) return;
+
+    if (!user || !defaultAccountId || !activeCategoryId) {
+      setErrorMsg('Still setting up your account — give it a second and try again.');
+      return;
+    }
+
+    const numericSplit = Number(splitAmount);
+    const splitting = splitEnabled && splitName.trim().length > 0 && numericSplit > 0;
+    if (splitEnabled && splitting && numericSplit > numericAmount) {
+      setErrorMsg("The split amount can't be more than the total.");
+      return;
+    }
+
     setSaving(true);
-    try {
-      // NOTE: account_id/category_id are placeholders until Phase 1 wires
-      // real profile/category lookups — this proves the write path exists,
-      // it isn't the finished insert.
-      await supabase.from('transactions').insert({
-        transaction_date: new Date().toISOString().slice(0, 10),
+    setErrorMsg(null);
+    setShareLink(null);
+
+    const transactionDate = shiftedDateISO(dayOffset);
+    // No month_start_day-aware budget cycle yet (that's the Monthly Wizard,
+    // Phase 3) — calendar month is the right default until then.
+    const budgetMonth = `${transactionDate.slice(0, 7)}-01`;
+
+    const { data: transaction, error } = await supabase
+      .from('transactions')
+      .insert({
+        owner_id: user.id,
+        budget_month: budgetMonth,
+        transaction_date: transactionDate,
         type: 'EXPENSE',
-        account_id: '00000000-0000-0000-0000-000000000000',
+        account_id: defaultAccountId,
+        category_id: activeCategoryId,
         amount: numericAmount,
-        note: category,
-      } as never);
-      setSavedFlash(true);
-      setTimeout(() => setSavedFlash(false), 1200);
-      setAmount('');
-    } catch {
-      // Expected to fail until a real Supabase project + auth exist.
-    } finally {
+        note: note.trim() || null,
+      })
+      .select('id')
+      .single();
+
+    if (error || !transaction) {
+      setErrorMsg(error?.message ?? 'Something went wrong saving that.');
       setSaving(false);
+      return;
+    }
+
+    if (splitting) {
+      const { data: debt, error: debtError } = await supabase
+        .from('debts')
+        .insert({
+          owner_id: user.id,
+          transaction_id: transaction.id,
+          owed_by_name: splitName.trim(),
+          amount: numericSplit,
+          target_account_id: defaultAccountId,
+          message: splitMessage.trim() || null,
+        })
+        .select('share_token')
+        .single();
+
+      if (debtError) {
+        // The expense itself is already saved — a failed debt link isn't
+        // worth losing that, so surface it but don't roll anything back.
+        setErrorMsg(`Saved, but couldn't create the share link: ${debtError.message}`);
+      } else if (debt) {
+        setShareLink(linkForToken(debt.share_token));
+      }
+    }
+
+    setSavedFlash(true);
+    setTimeout(() => setSavedFlash(false), 1200);
+    setAmount('');
+    setNote('');
+    setSplitEnabled(false);
+    setSplitName('');
+    setSplitAmount('');
+    setSplitMessage('');
+    setLinkCopied(false);
+    setSaving(false);
+  }
+
+  async function copyShareLink() {
+    if (!shareLink) return;
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+      await navigator.clipboard.writeText(shareLink);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1500);
     }
   }
 
@@ -102,35 +206,108 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       </View>
 
       <View style={styles.chipRow}>
-        {CATEGORY_NAMES.map((name) => {
-          const active = category === name;
-          return (
-            <Pressable
-              key={name}
-              onPress={() => setCategory(name)}
-              style={[
-                styles.chip,
-                { backgroundColor: active ? tokens.accent : tokens.card },
-              ]}
-            >
-              <Text
-                style={{
-                  color: active ? tokens.accentText : tokens.text,
-                  fontFamily: fontFamily.semibold,
-                  fontSize: 13,
-                }}
+        {categories.length === 0 ? (
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+            {dataLoading ? 'Setting up your categories…' : 'No categories yet'}
+          </Text>
+        ) : (
+          categories.map((cat) => {
+            const active = activeCategoryId === cat.id;
+            return (
+              <Pressable
+                key={cat.id}
+                onPress={() => setCategoryId(cat.id)}
+                style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card }]}
               >
-                {name}
-              </Text>
-            </Pressable>
-          );
-        })}
+                <Text
+                  style={{
+                    color: active ? tokens.accentText : tokens.text,
+                    fontFamily: fontFamily.semibold,
+                    fontSize: 13,
+                  }}
+                >
+                  {cat.name}
+                </Text>
+              </Pressable>
+            );
+          })
+        )}
       </View>
+
+      <TextInput
+        value={note}
+        onChangeText={setNote}
+        placeholder="Note (optional) — e.g. what it was for"
+        placeholderTextColor={tokens.textMuted}
+        style={[styles.noteInput, { color: tokens.text, borderColor: tokens.border }]}
+      />
+
+      <Pressable onPress={() => setSplitEnabled((v) => !v)} style={styles.splitToggle}>
+        <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+          {splitEnabled ? '− Cancel split' : '+ Split part of this with someone'}
+        </Text>
+      </Pressable>
+
+      {splitEnabled && (
+        <View style={[styles.splitPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+          <TextInput
+            value={splitName}
+            onChangeText={setSplitName}
+            placeholder="Who owes you? (e.g. Kačka)"
+            placeholderTextColor={tokens.textMuted}
+            style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
+          />
+          <TextInput
+            value={splitAmount}
+            onChangeText={setSplitAmount}
+            keyboardType="numeric"
+            placeholder="How much of it? (CZK)"
+            placeholderTextColor={tokens.textMuted}
+            style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
+          />
+          <TextInput
+            value={splitMessage}
+            onChangeText={setSplitMessage}
+            placeholder="Message on their link/QR (optional)"
+            placeholderTextColor={tokens.textMuted}
+            style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
+          />
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+            Leave blank to just use the note above, or the category name.
+          </Text>
+        </View>
+      )}
+
+      {errorMsg && (
+        <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 13, textAlign: 'center' }}>
+          {errorMsg}
+        </Text>
+      )}
+
+      {shareLink && (
+        <View style={[styles.shareBox, { backgroundColor: tokens.greenBg }]}>
+          <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5, marginBottom: 6 }}>
+            Share link created
+          </Text>
+          <Text
+            selectable
+            numberOfLines={1}
+            style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 8 }}
+          >
+            {shareLink}
+          </Text>
+          <Pressable onPress={copyShareLink} style={[styles.copyBtn, { backgroundColor: tokens.card }]}>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+              {linkCopied ? 'Copied' : 'Copy link'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
 
       <Pressable
         onPress={handleSave}
-        disabled={saving}
-        style={[styles.saveBtn, { backgroundColor: tokens.accent }]}
+        disabled={saving || dataLoading}
+        style={[styles.saveBtn, { backgroundColor: tokens.accent, opacity: saving || dataLoading ? 0.6 : 1 }]}
       >
         <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
           {savedFlash ? 'Saved' : 'Save'}
@@ -148,5 +325,11 @@ const styles = StyleSheet.create({
   amountInput: { fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 },
+  noteInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  splitToggle: { alignItems: 'center', paddingVertical: 2 },
+  splitPanel: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 8 },
+  splitInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  shareBox: { borderRadius: 14, padding: 12 },
+  copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
   saveBtn: { paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
 });

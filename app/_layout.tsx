@@ -11,6 +11,8 @@ import {
   Manrope_800ExtraBold,
 } from '@expo-google-fonts/manrope';
 import { ThemeProvider } from '@/lib/theme-context';
+import { AuthProvider } from '@/lib/auth-context';
+import { AuthGate } from '@/components/AuthGate';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
   // no-op — fine on web / if already hidden
@@ -43,12 +45,17 @@ export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="(mobile)" />
-          <Stack.Screen name="(app)" />
-          <Stack.Screen name="d/[token]" />
-        </Stack>
+        <AuthProvider>
+          <AuthGate>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="sign-in" />
+              <Stack.Screen name="(mobile)" />
+              <Stack.Screen name="(app)" />
+              <Stack.Screen name="d/[token]" />
+            </Stack>
+          </AuthGate>
+        </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

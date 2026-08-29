@@ -128,7 +128,11 @@ create table debts (
   amount numeric(12, 2) not null check (amount > 0),
   target_account_id uuid not null references accounts (id) on delete restrict,
   status text not null default 'OUTSTANDING' check (status in ('OUTSTANDING', 'CLAIMED_PAID', 'SETTLED')),
-  share_token text not null unique default encode(gen_random_bytes(12), 'base64url'),
+  -- 'hex', not 'base64url' — Postgres's built-in encode() only supports
+  -- 'base64' / 'hex' / 'escape'; 'base64url' isn't a real option and fails
+  -- at insert time with "unrecognized encoding". hex is fully URL-safe on
+  -- its own (no +, /, or = padding to strip), just a bit longer.
+  share_token text not null unique default encode(gen_random_bytes(12), 'hex'),
   claimed_paid_at timestamptz,
   settled_at timestamptz,
   settlement_transaction_id uuid references transactions (id) on delete set null,
