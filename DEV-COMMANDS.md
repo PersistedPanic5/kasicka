@@ -1,0 +1,82 @@
+# Dev commands cheat sheet
+
+The commands you'll run over and over while we build this. Kept here so
+neither of us has to re-type/re-explain them each time.
+
+## After Claude sends you new/updated files
+
+Almost always, just this — pushes the new code to GitHub, which
+auto-triggers a new Vercel deployment (usually live in ~1 minute, no
+extra step needed):
+
+```
+cd "C:\Development\Personal finance\kasicka"
+git add .
+git commit -m "describe what changed"
+git push
+```
+
+If Claude mentions a **new package was added** (check `package.json` —
+or just always safe to run), also do this before restarting the dev
+server:
+
+```
+npm install
+```
+
+## Restarting the local dev server
+
+Normal restart (after most code changes):
+
+```
+Ctrl+C
+npm run web
+```
+
+If something looks stale/broken after a restart (old error still
+showing, styles look wrong, blank page) — clear the cache too:
+
+```
+npm run web -- -c
+```
+
+Then hard-refresh the browser tab (Ctrl+Shift+R).
+
+## When `.env` changes
+
+`.env` isn't picked up by hot-reload — always needs a full restart:
+
+```
+Ctrl+C
+npm run web
+```
+
+## Checking the code compiles (optional — Claude usually already does this
+before sending you files, but useful if something's acting odd)
+
+```
+npx tsc --noEmit
+```
+
+No output = clean. Errors print file/line locations.
+
+## Deploying
+
+Normal case: **you don't do anything manually** — pushing to `main` on
+GitHub auto-deploys to Vercel. Check progress/logs at
+vercel.com → your project → Deployments.
+
+Manual redeploy (e.g. after changing a Vercel project setting like Build
+Command, which needs a fresh build to take effect): Vercel → your
+project → Deployments tab → latest deployment → **⋯** menu → **Redeploy**
+(choose *without* existing build cache when in doubt).
+
+## Where things live
+
+- Local `.env` (Supabase URL + key) — not in git, never gets pushed. If
+  you ever lose it: Supabase dashboard → your project → **Connect**
+  button (top of the page) → copy the URL + publishable key shown there.
+- Supabase SQL Editor — for running new migration files (`supabase/migrations/*.sql`)
+  when Claude adds one. Paste the file's contents in, run it.
+- Vercel env vars (same two values as `.env`) — Vercel → your project →
+  Settings → Environment Variables.
