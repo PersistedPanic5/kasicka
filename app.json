@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "Kasička",
+    "slug": "kasicka",
+    "scheme": "kasicka",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "eu.kasicka.app"
+    },
+    "android": {
+      "package": "eu.kasicka.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#F5F3EC",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro",
+      "output": "static",
+      "name": "Kasička",
+      "shortName": "Kasička",
+      "themeColor": "#F5F3EC",
+      "backgroundColor": "#F5F3EC",
+      "display": "standalone"
+    }
+  }
+}
