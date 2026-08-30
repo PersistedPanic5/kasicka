@@ -96,7 +96,10 @@ ready:
 1. Sign up / log in at [vercel.com](https://vercel.com), preferably with
    your GitHub account so it can connect directly to the repo from step 1.
 2. Import the `kasicka` repo as a new Vercel project. Build command:
-   `npx expo export --platform web`, output directory: `dist`.
+   `npx expo export --platform web && cp "dist/d/[token].html" dist/d/index.html`,
+   output directory: `dist`. (The `cp` step and `vercel.json`'s rewrite
+   rule together are what make the public debt-share link work — see
+   "Known scaffold-stage details" below.)
 3. Add the two `EXPO_PUBLIC_SUPABASE_*` values from your `.env` as
    Environment Variables in the Vercel project settings (same names).
 4. Deploy. You'll get a free `*.vercel.app` URL immediately — good enough to
@@ -108,6 +111,17 @@ ready:
 
 ## Known scaffold-stage details worth knowing about
 
+- **The public debt-share link (`/d/[token]`) needs a build workaround
+  to work on a static host.** Expo Router's static web export can't
+  pre-render a truly dynamic route — it has no way to know share tokens
+  that don't exist yet at build time — so it exports a single literal
+  file, `dist/d/[token].html`, which no real visitor's URL matches on its
+  own. The fix: the Vercel Build Command copies that file to
+  `dist/d/index.html`, and `vercel.json`'s rewrite sends any `/d/<token>`
+  request to that file *without changing the browser's URL* — so the
+  page's own client-side code still reads the real token from the
+  address bar. If this route is ever restructured, both pieces
+  (the `cp` step and the rewrite) need to move together.
 - **`@supabase/supabase-js` is pinned to exactly `2.55.0`**, not the
   latest — every version from `2.56.0` through the current `2.112.4` has a
   real regression where `supabase.rpc(name, args)` silently fails to type
