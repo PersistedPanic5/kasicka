@@ -120,20 +120,28 @@ ready:
   `/transactions`, etc. hit Vercel's static file server directly and got
   a real 404, since there's no file literally named `debts` (no
   extension) in the output. `cleanUrls: true` tells Vercel to try
-  `<path>.html` for any extensionless request — this coexists fine with
-  the `/d/:token` rewrite below, which still takes priority since it's
-  an explicit match.
+  `<path>.html` for any extensionless request.
+- **With `cleanUrls: true`, every rewrite `destination` must also drop
+  its `.html` extension** — this is documented Vercel behavior, not
+  optional: "If cleanUrls is set to true... do not include the file
+  extension in the source or destination path." Missing this the first
+  time briefly re-broke the `/d/<token>` share links right after
+  `cleanUrls` was added (destination was still `/d/index.html`) — fixed
+  by pointing the rewrite at `/d/index` instead. If a future rewrite is
+  added to this file, its destination needs the same treatment.
 - **The public debt-share link (`/d/[token]`) needs a build workaround
   to work on a static host.** Expo Router's static web export can't
   pre-render a truly dynamic route — it has no way to know share tokens
   that don't exist yet at build time — so it exports a single literal
   file, `dist/d/[token].html`, which no real visitor's URL matches on its
   own. The fix: the Vercel Build Command copies that file to
-  `dist/d/index.html`, and `vercel.json`'s rewrite sends any `/d/<token>`
-  request to that file *without changing the browser's URL* — so the
-  page's own client-side code still reads the real token from the
-  address bar. If this route is ever restructured, both pieces
-  (the `cp` step and the rewrite) need to move together.
+  `dist/d/index.html` (the file on disk still needs its real extension —
+  only the *rewrite destination string* above needs to drop it), and
+  `vercel.json`'s rewrite sends any `/d/<token>` request to it *without
+  changing the browser's URL* — so the page's own client-side code still
+  reads the real token from the address bar. If this route is ever
+  restructured, both pieces (the `cp` step and the rewrite) need to move
+  together.
 - **`@supabase/supabase-js` is pinned to exactly `2.55.0`**, not the
   latest — every version from `2.56.0` through the current `2.112.4` has a
   real regression where `supabase.rpc(name, args)` silently fails to type
