@@ -7,8 +7,20 @@ import { useTheme } from '@/lib/theme-context';
  * Sun/moon glyphs drawn as inline SVG paths (matching the mockups —
  * no icon font or emoji dependency).
  */
-export function ThemeToggle({ size = 36 }: { size?: number }) {
+export function ThemeToggle({
+  size = 36,
+  labels,
+}: {
+  size?: number;
+  /** Localized accessibility labels — callers inside a language context
+   * (lib/language-context.tsx, or app/d/[token].tsx's own t()) should pass
+   * these; defaults to English for any call site that doesn't (there isn't
+   * one currently, but this keeps the component usable standalone). */
+  labels?: { toLight: string; toDark: string };
+}) {
   const { mode, tokens, toggle } = useTheme();
+  const toLight = labels?.toLight ?? 'Switch to light mode';
+  const toDark = labels?.toDark ?? 'Switch to dark mode';
   return (
     <Pressable
       onPress={toggle}
@@ -17,7 +29,7 @@ export function ThemeToggle({ size = 36 }: { size?: number }) {
         { width: size, height: size, backgroundColor: tokens.card, borderColor: tokens.border },
       ]}
       accessibilityRole="button"
-      accessibilityLabel={mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      accessibilityLabel={mode === 'dark' ? toLight : toDark}
     >
       {mode === 'dark' ? (
         <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={tokens.accent} strokeWidth={1.8} strokeLinecap="round">

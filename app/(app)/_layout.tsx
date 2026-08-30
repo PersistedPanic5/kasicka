@@ -3,13 +3,14 @@ import { StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { useLanguage } from '@/lib/language-context';
 
 const NAV_ITEMS = [
-  { href: '/(app)/home', label: 'Home' },
-  { href: '/(app)/overview', label: 'Overview' },
-  { href: '/(app)/debts', label: 'Debts' },
-  { href: '/(app)/transactions', label: 'Transactions' },
-  { href: '/(app)/more', label: 'More' },
+  { href: '/(app)/home', labelKey: 'nav.home' },
+  { href: '/(app)/overview', labelKey: 'nav.overview' },
+  { href: '/(app)/debts', labelKey: 'nav.debts' },
+  { href: '/(app)/transactions', labelKey: 'nav.transactions' },
+  { href: '/(app)/more', labelKey: 'nav.more' },
 ] as const;
 
 /**
@@ -20,6 +21,7 @@ const NAV_ITEMS = [
  */
 export default function AppLayout() {
   const { tokens } = useTheme();
+  const { t } = useLanguage();
   const pathname = usePathname();
 
   return (
@@ -43,14 +45,14 @@ export default function AppLayout() {
                       },
                     ])}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                   </Text>
                 </Link>
               );
             })}
           </View>
         </View>
-        <ThemeToggle />
+        <ThemeToggle labels={{ toLight: t('common.switchToLight'), toDark: t('common.switchToDark') }} />
       </View>
 
       <View style={styles.content}>

@@ -3,6 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
+import { useLanguage } from '@/lib/language-context';
 
 /**
  * The only screen a signed-out visitor can reach besides the public
@@ -12,6 +13,7 @@ import { useAuth } from '@/lib/auth-context';
 export default function SignIn() {
   const { tokens } = useTheme();
   const { signInWithGoogle } = useAuth();
+  const { t } = useLanguage();
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
@@ -36,11 +38,11 @@ export default function SignIn() {
             textAlign: 'center',
           }}
         >
-          Sign in to continue
+          {t('signIn.title')}
         </Text>
         <Pressable onPress={signInWithGoogle} style={[styles.button, { backgroundColor: tokens.accent }]}>
           <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
-            Continue with Google
+            {t('signIn.continueWithGoogle')}
           </Text>
         </Pressable>
       </View>

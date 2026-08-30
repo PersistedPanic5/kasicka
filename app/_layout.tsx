@@ -12,6 +12,7 @@ import {
 } from '@expo-google-fonts/manrope';
 import { ThemeProvider } from '@/lib/theme-context';
 import { AuthProvider } from '@/lib/auth-context';
+import { LanguageProvider } from '@/lib/language-context';
 import { AuthGate } from '@/components/AuthGate';
 
 SplashScreen.preventAutoHideAsync().catch(() => {
@@ -46,15 +47,17 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ThemeProvider>
         <AuthProvider>
-          <AuthGate>
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="sign-in" />
-              <Stack.Screen name="(mobile)" />
-              <Stack.Screen name="(app)" />
-              <Stack.Screen name="d/[token]" />
-            </Stack>
-          </AuthGate>
+          <LanguageProvider>
+            <AuthGate>
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="sign-in" />
+                <Stack.Screen name="(mobile)" />
+                <Stack.Screen name="(app)" />
+                <Stack.Screen name="d/[token]" />
+              </Stack>
+            </AuthGate>
+          </LanguageProvider>
         </AuthProvider>
       </ThemeProvider>
     </SafeAreaProvider>

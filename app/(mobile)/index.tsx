@@ -6,6 +6,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { ExpenseEntryForm } from '@/components/ExpenseEntryForm';
+import { useLanguage } from '@/lib/language-context';
 
 /**
  * The fast mobile capture screen — matches Main.dc.html in the Design
@@ -14,6 +15,7 @@ import { ExpenseEntryForm } from '@/components/ExpenseEntryForm';
  */
 export default function MobileFastEntry() {
   const { tokens } = useTheme();
+  const { t } = useLanguage();
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
@@ -34,7 +36,7 @@ export default function MobileFastEntry() {
               </Svg>
             </Pressable>
           </Link>
-          <ThemeToggle size={34} />
+          <ThemeToggle size={34} labels={{ toLight: t('common.switchToLight'), toDark: t('common.switchToDark') }} />
         </View>
       </View>
 

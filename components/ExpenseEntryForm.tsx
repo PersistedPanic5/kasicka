@@ -5,6 +5,7 @@ import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
+import { useLanguage } from '@/lib/language-context';
 
 /**
  * The fast expense-capture form — the single most important screen in the
@@ -31,6 +32,7 @@ import { useAppData } from '@/lib/use-app-data';
  */
 export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 'desktop' }) {
   const { tokens } = useTheme();
+  const { t } = useLanguage();
   const { user } = useAuth();
   const { defaultAccountId, categories, loading: dataLoading } = useAppData();
 
@@ -55,11 +57,11 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const quickAmounts = [20, 50, 100, 200]; // TODO: profile.amount_buttons (More → Profile)
 
   const dateLabel = useMemo(() => {
-    if (dayOffset === 0) return 'Today';
-    if (dayOffset === 1) return 'Tomorrow';
-    if (dayOffset === -1) return 'Yesterday';
-    return dayOffset > 0 ? `+${dayOffset} days` : `${dayOffset} days`;
-  }, [dayOffset]);
+    if (dayOffset === 0) return t('common.today');
+    if (dayOffset === 1) return t('common.tomorrow');
+    if (dayOffset === -1) return t('common.yesterday');
+    return dayOffset > 0 ? `+${dayOffset} ${t('common.days')}` : `${dayOffset} ${t('common.days')}`;
+  }, [dayOffset, t]);
 
   function shiftedDateISO(offset: number) {
     const d = new Date();
@@ -79,14 +81,14 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     if (!numericAmount || numericAmount <= 0) return;
 
     if (!user || !defaultAccountId || !activeCategoryId) {
-      setErrorMsg('Still setting up your account — give it a second and try again.');
+      setErrorMsg(t('home.settingUpAccount'));
       return;
     }
 
     const numericSplit = Number(splitAmount);
     const splitting = splitEnabled && splitName.trim().length > 0 && numericSplit > 0;
     if (splitEnabled && splitting && numericSplit > numericAmount) {
-      setErrorMsg("The split amount can't be more than the total.");
+      setErrorMsg(t('home.splitTooBig'));
       return;
     }
 
@@ -115,7 +117,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       .single();
 
     if (error || !transaction) {
-      setErrorMsg(error?.message ?? 'Something went wrong saving that.');
+      setErrorMsg(error?.message ?? t('common.savingError'));
       setSaving(false);
       return;
     }
@@ -137,7 +139,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       if (debtError) {
         // The expense itself is already saved — a failed debt link isn't
         // worth losing that, so surface it but don't roll anything back.
-        setErrorMsg(`Saved, but couldn't create the share link: ${debtError.message}`);
+        setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${debtError.message}`);
       } else if (debt) {
         setShareLink(linkForToken(debt.share_token));
       }
@@ -208,7 +210,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       <View style={styles.chipRow}>
         {categories.length === 0 ? (
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
-            {dataLoading ? 'Setting up your categories…' : 'No categories yet'}
+            {dataLoading ? t('home.settingUpCategories') : t('home.noCategoriesYet')}
           </Text>
         ) : (
           categories.map((cat) => {
@@ -237,14 +239,14 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       <TextInput
         value={note}
         onChangeText={setNote}
-        placeholder="Note (optional) — e.g. what it was for"
+        placeholder={t('home.notePlaceholder')}
         placeholderTextColor={tokens.textMuted}
         style={[styles.noteInput, { color: tokens.text, borderColor: tokens.border }]}
       />
 
       <Pressable onPress={() => setSplitEnabled((v) => !v)} style={styles.splitToggle}>
         <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-          {splitEnabled ? '− Cancel split' : '+ Split part of this with someone'}
+          {splitEnabled ? t('home.splitToggleOff') : t('home.splitToggleOn')}
         </Text>
       </Pressable>
 
@@ -253,7 +255,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
           <TextInput
             value={splitName}
             onChangeText={setSplitName}
-            placeholder="Who owes you? (e.g. Kačka)"
+            placeholder={t('home.whoOwesPlaceholder')}
             placeholderTextColor={tokens.textMuted}
             style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
           />
@@ -261,19 +263,19 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             value={splitAmount}
             onChangeText={setSplitAmount}
             keyboardType="numeric"
-            placeholder="How much of it? (CZK)"
+            placeholder={t('home.howMuchPlaceholder')}
             placeholderTextColor={tokens.textMuted}
             style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
           />
           <TextInput
             value={splitMessage}
             onChangeText={setSplitMessage}
-            placeholder="Message on their link/QR (optional)"
+            placeholder={t('home.messagePlaceholder')}
             placeholderTextColor={tokens.textMuted}
             style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
           />
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
-            Leave blank to just use the note above, or the category name.
+            {t('home.splitHint')}
           </Text>
         </View>
       )}
@@ -287,7 +289,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       {shareLink && (
         <View style={[styles.shareBox, { backgroundColor: tokens.greenBg }]}>
           <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5, marginBottom: 6 }}>
-            Share link created
+            {t('home.shareLinkCreated')}
           </Text>
           <Text
             selectable
@@ -298,7 +300,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
           </Text>
           <Pressable onPress={copyShareLink} style={[styles.copyBtn, { backgroundColor: tokens.card }]}>
             <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-              {linkCopied ? 'Copied' : 'Copy link'}
+              {linkCopied ? t('common.copied') : t('common.copyLink')}
             </Text>
           </Pressable>
         </View>
@@ -310,7 +312,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         style={[styles.saveBtn, { backgroundColor: tokens.accent, opacity: saving || dataLoading ? 0.6 : 1 }]}
       >
         <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
-          {savedFlash ? 'Saved' : 'Save'}
+          {savedFlash ? t('home.savedBtn') : t('home.saveBtn')}
         </Text>
       </Pressable>
     </View>

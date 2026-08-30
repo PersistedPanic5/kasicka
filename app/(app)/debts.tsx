@@ -4,6 +4,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
+import { useLanguage } from '@/lib/language-context';
 import type { DebtStatus } from '@/types/database';
 
 type DebtRow = {
@@ -39,6 +40,7 @@ type DebtRow = {
  */
 export default function Debts() {
   const { tokens } = useTheme();
+  const { t } = useLanguage();
   const { user } = useAuth();
   const [debts, setDebts] = useState<DebtRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -109,7 +111,7 @@ export default function Debts() {
         category_id: original?.category_id ?? null,
         account_id: original?.account_id ?? debt.target_account_id,
         amount: debt.amount,
-        note: `Settled: ${debt.owed_by_name}`,
+        note: `${t('debts.settledNotePrefix')}: ${debt.owed_by_name}`,
         source: 'DEBT_SETTLEMENT',
       })
       .select('id')
@@ -191,11 +193,11 @@ export default function Debts() {
     if (!editing) return;
     const numericAmount = Number(editAmount);
     if (!numericAmount || numericAmount <= 0) {
-      setEditError('Enter an amount greater than 0.');
+      setEditError(t('debts.amountError'));
       return;
     }
     if (!editName.trim()) {
-      setEditError('Who owes you this?');
+      setEditError(t('debts.nameError'));
       return;
     }
     setEditSaving(true);
@@ -256,7 +258,7 @@ export default function Debts() {
             {debt.status !== 'SETTLED' && (
               <Pressable onPress={() => copyLink(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
                 <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-                  {copiedId === debt.id ? 'Copied' : 'Copy link'}
+                  {copiedId === debt.id ? t('common.copied') : t('common.copyLink')}
                 </Text>
               </Pressable>
             )}
@@ -267,12 +269,12 @@ export default function Debts() {
                 style={[styles.smallBtn, { backgroundColor: tokens.accent, opacity: busyId === debt.id ? 0.6 : 1 }]}
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-                  Confirm settled
+                  {t('debts.confirmSettled')}
                 </Text>
               </Pressable>
             )}
             <Pressable onPress={() => openEdit(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
-              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>Edit</Text>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>{t('common.edit')}</Text>
             </Pressable>
             <Pressable
               onPress={() => handleDeleteOne(debt.id)}
@@ -285,7 +287,7 @@ export default function Debts() {
                   fontSize: 12,
                 }}
               >
-                {pendingDeleteId === debt.id ? 'Confirm?' : 'Delete'}
+                {pendingDeleteId === debt.id ? t('common.confirmQuestion') : t('common.delete')}
               </Text>
             </Pressable>
           </View>
@@ -318,28 +320,28 @@ export default function Debts() {
     <View style={{ flex: 1 }}>
       <View style={styles.topBar}>
         <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
-          {selectMode && selectedIds.size > 0 ? `${selectedIds.size} selected` : ' '}
+          {selectMode && selectedIds.size > 0 ? `${selectedIds.size} ${t('transactions.selected')}` : ' '}
         </Text>
         <Pressable onPress={toggleSelectMode}>
           <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-            {selectMode ? 'Cancel' : 'Select'}
+            {selectMode ? t('common.cancel') : t('common.select')}
           </Text>
         </Pressable>
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: selectMode ? 90 : 40 }}>
         {loading ? (
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>Loading…</Text>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>{t('common.loading')}</Text>
         ) : (
           <>
             <Section
-              title="Awaiting your confirmation"
+              title={t('debts.awaitingConfirmation')}
               items={awaitingConfirmation}
               action="settle"
-              emptyNote="Nothing marked as paid yet."
+              emptyNote={t('debts.nothingMarkedPaid')}
             />
-            <Section title="Outstanding" items={outstanding} emptyNote="Nobody owes you anything right now." />
-            <Section title="Settled" items={settled} emptyNote="No settled debts yet." />
+            <Section title={t('debts.outstanding')} items={outstanding} emptyNote={t('debts.nobodyOwes')} />
+            <Section title={t('debts.settled')} items={settled} emptyNote={t('debts.noSettledYet')} />
           </>
         )}
       </ScrollView>
@@ -347,7 +349,7 @@ export default function Debts() {
       {selectMode && (
         <View style={[styles.bulkBar, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
-            {selectedIds.size === 0 ? 'Tap debts to select' : `${selectedIds.size} selected`}
+            {selectedIds.size === 0 ? t('debts.tapToSelect') : `${selectedIds.size} ${t('transactions.selected')}`}
           </Text>
           <Pressable
             onPress={handleBulkDelete}
@@ -367,7 +369,9 @@ export default function Debts() {
                 fontSize: 13,
               }}
             >
-              {bulkConfirm ? `Confirm delete (${selectedIds.size})?` : `Delete${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
+              {bulkConfirm
+                ? `${t('transactions.confirmDelete')} (${selectedIds.size})?`
+                : `${t('common.delete')}${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
             </Text>
           </Pressable>
         </View>
@@ -377,11 +381,11 @@ export default function Debts() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
             <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 14 }}>
-              Edit debt
+              {t('debts.editTitle')}
             </Text>
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 6 }}>
-              Who owes you
+              {t('debts.whoOwesLabel')}
             </Text>
             <TextInput
               value={editName}
@@ -390,7 +394,7 @@ export default function Debts() {
             />
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
-              Amount (CZK)
+              {t('debts.amountLabel')}
             </Text>
             <TextInput
               value={editAmount}
@@ -400,12 +404,12 @@ export default function Debts() {
             />
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
-              Message on their link/QR
+              {t('debts.messageLabel')}
             </Text>
             <TextInput
               value={editMessage}
               onChangeText={setEditMessage}
-              placeholder="Optional"
+              placeholder={t('common.optional')}
               placeholderTextColor={tokens.textMuted}
               style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
             />
@@ -418,7 +422,7 @@ export default function Debts() {
 
             <View style={styles.modalActions}>
               <Pressable onPress={closeEdit} style={[styles.modalBtn, { backgroundColor: tokens.card }]}>
-                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>Cancel</Text>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{t('common.cancel')}</Text>
               </Pressable>
               <Pressable
                 onPress={saveEdit}
@@ -426,7 +430,7 @@ export default function Debts() {
                 style={[styles.modalBtn, { backgroundColor: tokens.accent, opacity: editSaving ? 0.6 : 1 }]}
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
-                  {editSaving ? 'Saving…' : 'Save'}
+                  {editSaving ? t('common.saving') : t('common.save')}
                 </Text>
               </Pressable>
             </View>

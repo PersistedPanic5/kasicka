@@ -8,6 +8,7 @@ import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { supabase } from '@/lib/supabase';
 import { buildSpdPayload, czechIBAN } from '@/lib/czech-qr-payment';
+import { translations, detectBrowserLanguage, type Language } from '@/lib/i18n';
 
 /**
  * The public, no-login debt share page — matches DebtorShare.dc.html.
@@ -36,9 +37,14 @@ import { buildSpdPayload, czechIBAN } from '@/lib/czech-qr-payment';
  * has to) type the payment in manually — same IBAN components, formatted the
  * familiar Czech way (prefix-number/bankCode).
  *
- * TODO(Phase 4 / localization pass): auto-detect device language + manual
- * switch, per screens-and-flows.md "Localization" — English-only for now.
+ * Localization: unlike the signed-in app (lib/language-context.tsx, backed
+ * by `profile.language`), this page has no profile to read — the visitor
+ * isn't signed in. It auto-detects from the browser (lib/i18n.ts
+ * detectBrowserLanguage) and offers a manual EN/CS toggle next to the theme
+ * toggle, remembered in this browser via localStorage so a debtor who
+ * switches once doesn't have to again on the next link they open.
  */
+const LANGUAGE_STORAGE_KEY = 'kasicka-debtshare-language';
 type DebtShareView = {
   description: string;
   amount: number;
@@ -63,9 +69,35 @@ export default function DebtorSharePage() {
   const [debt, setDebt] = useState<DebtShareView | null>(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [qrActionLabel, setQrActionLabel] = useState('Save / share QR');
   const [acctCopied, setAcctCopied] = useState(false);
+  const [qrActionState, setQrActionState] = useState<'idle' | 'saved' | 'shared'>('idle');
   const qrRef = useRef<{ toDataURL?: (cb: (data: string) => void) => void } | null>(null);
+
+  const [language, setLanguageState] = useState<Language>('en');
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    try {
+      const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+      setLanguageState(stored === 'cs' || stored === 'en' ? stored : detectBrowserLanguage());
+    } catch {
+      setLanguageState(detectBrowserLanguage());
+    }
+  }, []);
+  function setLanguage(lang: Language) {
+    setLanguageState(lang);
+    try {
+      if (Platform.OS === 'web') window.localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+    } catch {
+      // localStorage can be unavailable (private browsing) — the choice
+      // just won't persist for next time, which is a fine fallback.
+    }
+  }
+  const t = (path: string): string => {
+    const value = path
+      .split('.')
+      .reduce<unknown>((node, key) => (node && typeof node === 'object' && key in node ? (node as Record<string, unknown>)[key] : undefined), translations[language]);
+    return typeof value === 'string' ? value : path;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -108,11 +140,11 @@ export default function DebtorSharePage() {
         if (nav?.canShare?.({ files: [file] })) {
           await nav.share({
             files: [file],
-            title: 'Payment QR code',
-            text: 'Scan this with your banking app to pay.',
+            title: t('debtShare.shareTitle'),
+            text: t('debtShare.shareText'),
           });
-          setQrActionLabel('Shared ✓');
-          setTimeout(() => setQrActionLabel('Save / share QR'), 2000);
+          setQrActionState('shared');
+          setTimeout(() => setQrActionState('idle'), 2000);
           return;
         }
       } catch {
@@ -126,8 +158,8 @@ export default function DebtorSharePage() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setQrActionLabel('Saved ✓');
-      setTimeout(() => setQrActionLabel('Save / share QR'), 2000);
+      setQrActionState('saved');
+      setTimeout(() => setQrActionState('idle'), 2000);
     });
   }
 
@@ -161,14 +193,38 @@ export default function DebtorSharePage() {
         <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 12, letterSpacing: 1 }}>
           KASIČKA
         </Text>
-        <ThemeToggle size={34} />
+        <View style={styles.headerRight}>
+          <View style={[styles.langSwitch, { borderColor: tokens.border }]}>
+            {(['en', 'cs'] as Language[]).map((lang) => (
+              <Pressable
+                key={lang}
+                onPress={() => setLanguage(lang)}
+                style={[
+                  styles.langBtn,
+                  { backgroundColor: language === lang ? tokens.accent : 'transparent' },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: language === lang ? tokens.accentText : tokens.textMuted,
+                    fontFamily: fontFamily.bold,
+                    fontSize: 11,
+                  }}
+                >
+                  {lang.toUpperCase()}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <ThemeToggle size={34} labels={{ toLight: t('common.switchToLight'), toDark: t('common.switchToDark') }} />
+        </View>
       </View>
 
       {loading && <ActivityIndicator color={tokens.accent} style={{ marginTop: 60 }} />}
 
       {!loading && notFound && (
         <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, textAlign: 'center', marginTop: 60 }}>
-          This link isn't valid — it may have already been used, or copied incorrectly.
+          {t('debtShare.linkInvalid')}
         </Text>
       )}
 
@@ -178,14 +234,15 @@ export default function DebtorSharePage() {
             <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 19 }}>P</Text>
           </View>
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 15, marginBottom: 6 }}>
-            Pavel says you owe him for
+            {'Pavel '}
+            {t('debtShare.owesFor')}
           </Text>
           <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 17, marginBottom: 18 }}>
             {debt.description}
           </Text>
           <Text style={{ color: tokens.text, fontFamily: fontFamily.regular, fontSize: 48 }}>
             {debt.amount}
-            <Text style={{ color: tokens.textMuted, fontSize: 20, fontFamily: fontFamily.medium }}> CZK</Text>
+            <Text style={{ color: tokens.textMuted, fontSize: 20, fontFamily: fontFamily.medium }}> {t('common.czk')}</Text>
           </Text>
 
           {debt.status === 'OUTSTANDING' && qrPayload && (
@@ -202,7 +259,7 @@ export default function DebtorSharePage() {
                   textAlign: 'center',
                 }}
               >
-                Scan with your banking app to pay
+                {t('debtShare.scanWithBankingApp')}
               </Text>
 
               {Platform.OS === 'web' && (
@@ -212,7 +269,11 @@ export default function DebtorSharePage() {
                     style={[styles.qrActionBtn, { backgroundColor: tokens.bg, borderColor: tokens.border }]}
                   >
                     <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-                      {qrActionLabel}
+                      {qrActionState === 'shared'
+                        ? t('debtShare.sharedCheck')
+                        : qrActionState === 'saved'
+                          ? t('debtShare.savedCheck')
+                          : t('debtShare.saveShareQr')}
                     </Text>
                   </Pressable>
                   <Text
@@ -225,8 +286,7 @@ export default function DebtorSharePage() {
                       opacity: 0.8,
                     }}
                   >
-                    Can't scan your own screen? Save the QR, then open it from your gallery using your banking app's
-                    QR scanner.
+                    {t('debtShare.cantScanOwnScreen')}
                   </Text>
                 </>
               )}
@@ -234,7 +294,7 @@ export default function DebtorSharePage() {
               {accountText && (
                 <View style={[styles.acctBox, { borderTopColor: tokens.border }]}>
                   <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11 }}>
-                    Or enter manually
+                    {t('debtShare.orEnterManually')}
                   </Text>
                   <Pressable onPress={() => copyAccountNumber(accountText)}>
                     <Text
@@ -258,7 +318,7 @@ export default function DebtorSharePage() {
                       marginTop: 4,
                     }}
                   >
-                    {acctCopied ? 'Copied ✓' : 'Tap number to copy'}
+                    {acctCopied ? t('debtShare.copiedCheck') : t('debtShare.tapToCopy')}
                   </Text>
                 </View>
               )}
@@ -270,7 +330,7 @@ export default function DebtorSharePage() {
           {debt.status === 'OUTSTANDING' && (
             <Pressable onPress={markPaid} style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
               <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 16 }}>
-                I've paid this
+                {t('debtShare.iPaidThis')}
               </Text>
             </Pressable>
           )}
@@ -278,14 +338,14 @@ export default function DebtorSharePage() {
           {debt.status === 'CLAIMED_PAID' && (
             <View style={[styles.claimedBox, { backgroundColor: tokens.greenBg }]}>
               <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 14, marginBottom: 4 }}>
-                Marked as paid
+                {t('debtShare.markedAsPaid')}
               </Text>
               <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12.5, opacity: 0.85 }}>
-                Pavel will confirm once he sees it land
+                {t('debtShare.willConfirm')}
               </Text>
               <Pressable onPress={undo}>
                 <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 8, textDecorationLine: 'underline', opacity: 0.7 }}>
-                  Undo
+                  {t('debtShare.undo')}
                 </Text>
               </Pressable>
             </View>
@@ -294,7 +354,7 @@ export default function DebtorSharePage() {
           {debt.status === 'SETTLED' && (
             <View style={[styles.claimedBox, { backgroundColor: tokens.greenBg }]}>
               <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 14 }}>
-                Settled — thank you!
+                {t('debtShare.settledThankYou')}
               </Text>
             </View>
           )}
@@ -307,6 +367,9 @@ export default function DebtorSharePage() {
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 24, paddingTop: 22, paddingBottom: 22 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  langSwitch: { flexDirection: 'row', borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
+  langBtn: { paddingHorizontal: 9, paddingVertical: 6 },
   body: { flex: 1, alignItems: 'center' },
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   primaryBtn: { width: '100%', paddingVertical: 17, borderRadius: 16, alignItems: 'center' },

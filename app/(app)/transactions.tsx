@@ -4,6 +4,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { useAppData } from '@/lib/use-app-data';
+import { useLanguage } from '@/lib/language-context';
 
 type TransactionRow = {
   id: string;
@@ -41,6 +42,9 @@ type TransactionRow = {
  */
 export default function Transactions() {
   const { tokens } = useTheme();
+  // Aliased to `tr` — this file already uses `t` as the loop variable for
+  // each transaction row (see transactions.map((t) => ...) below).
+  const { t: tr } = useLanguage();
   const { categories } = useAppData();
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -77,11 +81,11 @@ export default function Transactions() {
   }, [load]);
 
   const typeLabel: Record<string, string> = {
-    EXPENSE: 'Expense',
-    INCOME: 'Income',
-    RESERVE_TRANSFER: 'Reserve transfer',
-    PAYMENT_FROM_RESERVE: 'Reserve payment',
-    DEBT_SETTLEMENT_CREDIT: 'Debt settled',
+    EXPENSE: tr('transactions.typeExpense'),
+    INCOME: tr('transactions.typeIncome'),
+    RESERVE_TRANSFER: tr('transactions.typeReserveTransfer'),
+    PAYMENT_FROM_RESERVE: tr('transactions.typeReservePayment'),
+    DEBT_SETTLEMENT_CREDIT: tr('transactions.typeDebtSettled'),
   };
 
   const isCredit = (type: string) => type === 'INCOME' || type === 'DEBT_SETTLEMENT_CREDIT';
@@ -147,7 +151,7 @@ export default function Transactions() {
     if (!editing) return;
     const numericAmount = Number(editAmount);
     if (!numericAmount || numericAmount <= 0) {
-      setEditError('Enter an amount greater than 0.');
+      setEditError(tr('transactions.amountError'));
       return;
     }
     setEditSaving(true);
@@ -174,22 +178,22 @@ export default function Transactions() {
     <View style={{ flex: 1 }}>
       <View style={styles.topBar}>
         <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
-          {selectMode && selectedIds.size > 0 ? `${selectedIds.size} selected` : ' '}
+          {selectMode && selectedIds.size > 0 ? `${selectedIds.size} ${tr('transactions.selected')}` : ' '}
         </Text>
         <Pressable onPress={toggleSelectMode}>
           <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-            {selectMode ? 'Cancel' : 'Select'}
+            {selectMode ? tr('common.cancel') : tr('common.select')}
           </Text>
         </Pressable>
       </View>
 
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: selectMode ? 90 : 40 }}>
         {loading && (
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>Loading…</Text>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>{tr('common.loading')}</Text>
         )}
         {!loading && transactions.length === 0 && (
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 14 }}>
-            No transactions yet — anything you save from Home shows up here.
+            {tr('transactions.noneYet')}
           </Text>
         )}
         {transactions.map((t) => {
@@ -242,7 +246,7 @@ export default function Transactions() {
               {!selectMode && (
                 <View style={styles.rowActions}>
                   <Pressable onPress={() => openEdit(t)} style={[styles.rowActionBtn, { backgroundColor: tokens.card }]}>
-                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 11.5 }}>Edit</Text>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 11.5 }}>{tr('common.edit')}</Text>
                   </Pressable>
                   <Pressable
                     onPress={() => handleDeleteOne(t.id)}
@@ -258,7 +262,7 @@ export default function Transactions() {
                         fontSize: 11.5,
                       }}
                     >
-                      {pendingDeleteId === t.id ? 'Confirm?' : 'Delete'}
+                      {pendingDeleteId === t.id ? tr('common.confirmQuestion') : tr('common.delete')}
                     </Text>
                   </Pressable>
                 </View>
@@ -271,7 +275,7 @@ export default function Transactions() {
       {selectMode && (
         <View style={[styles.bulkBar, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
-            {selectedIds.size === 0 ? 'Tap rows to select' : `${selectedIds.size} selected`}
+            {selectedIds.size === 0 ? tr('transactions.tapToSelect') : `${selectedIds.size} ${tr('transactions.selected')}`}
           </Text>
           <Pressable
             onPress={handleBulkDelete}
@@ -291,7 +295,9 @@ export default function Transactions() {
                 fontSize: 13,
               }}
             >
-              {bulkConfirm ? `Confirm delete (${selectedIds.size})?` : `Delete${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
+              {bulkConfirm
+                ? `${tr('transactions.confirmDelete')} (${selectedIds.size})?`
+                : `${tr('common.delete')}${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
             </Text>
           </Pressable>
         </View>
@@ -301,11 +307,11 @@ export default function Transactions() {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
             <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 14 }}>
-              Edit transaction
+              {tr('transactions.editTitle')}
             </Text>
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 6 }}>
-              Amount
+              {tr('transactions.amountLabel')}
             </Text>
             <TextInput
               value={editAmount}
@@ -315,12 +321,12 @@ export default function Transactions() {
             />
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
-              Note
+              {tr('transactions.noteLabel')}
             </Text>
             <TextInput
               value={editNote}
               onChangeText={setEditNote}
-              placeholder="What it was for"
+              placeholder={tr('transactions.noteFieldPlaceholder')}
               placeholderTextColor={tokens.textMuted}
               style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
             />
@@ -328,7 +334,7 @@ export default function Transactions() {
             {categories.length > 0 && (
               <>
                 <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
-                  Category
+                  {tr('transactions.categoryLabel')}
                 </Text>
                 <View style={styles.chipRow}>
                   {categories.map((cat) => {
@@ -363,7 +369,7 @@ export default function Transactions() {
 
             <View style={styles.modalActions}>
               <Pressable onPress={closeEdit} style={[styles.modalBtn, { backgroundColor: tokens.card }]}>
-                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>Cancel</Text>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{tr('common.cancel')}</Text>
               </Pressable>
               <Pressable
                 onPress={saveEdit}
@@ -371,7 +377,7 @@ export default function Transactions() {
                 style={[styles.modalBtn, { backgroundColor: tokens.accent, opacity: editSaving ? 0.6 : 1 }]}
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
-                  {editSaving ? 'Saving…' : 'Save'}
+                  {editSaving ? tr('common.saving') : tr('common.save')}
                 </Text>
               </Pressable>
             </View>
