@@ -139,7 +139,7 @@ Deno.serve(async (_req) => {
         ? `${ownerDue[0].amount} CZK — tap to confirm`
         : ownerDue.map((i) => i.name).join(', ');
 
-    const payload = JSON.stringify({ title, body, url: '/more' });
+    const payload = JSON.stringify({ title, body, url: '/planning' });
     const pushSubscription = {
       endpoint: sub.endpoint,
       keys: { p256dh: sub.p256dh, auth: sub.auth },

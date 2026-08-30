@@ -1,0 +1,639 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'expo-router';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
+import { useTheme } from '@/lib/theme-context';
+import { fontFamily } from '@/lib/theme';
+import { useAuth } from '@/lib/auth-context';
+import { useLanguage } from '@/lib/language-context';
+import { supabase } from '@/lib/supabase';
+import {
+  accrualProgress,
+  confirmFinalPayment,
+  confirmReserveTransfer,
+  currentCycle,
+  finalPaymentQrPayload,
+  isFinalPaymentDue,
+  isReserveTransferDue,
+  monthlyReserveAmount,
+  reserveTransferQrPayload,
+  type LongTermTx,
+  type ReserveCycle,
+} from '@/lib/long-term';
+import type { Account, Category, LongTermItem } from '@/types/database';
+
+/**
+ * The 5-step monthly budgeting wizard — build-roadmap-v1.md Phase 3,
+ * screens-and-flows.md "Monthly budgeting wizard (desktop)": confirm
+ * budgets → last month's actual-vs-budget recap → long-term reserve
+ * overview → generate QR payments for bills due this cycle → finish.
+ *
+ * Deliberately a TOP-LEVEL route (app/wizard.tsx), a sibling of app/(app),
+ * not a screen inside it — that's what keeps it nav-free (see
+ * app/(app)/_layout.tsx's <Slot />, which every (app) screen inherits).
+ * The only way out is the explicit "Save & exit" link, matching the old
+ * app's guided-flow feel ("a focused, nav-free full-screen flow").
+ *
+ * "Save & exit to More" in the original spec now reads "to Planning" —
+ * Planning (not Settings) is where this wizard is launched from and where
+ * recurring/long-term items live day to day, so that's the natural place
+ * to land back on.
+ *
+ * Each step's own data saves as you move past it (budgets on step 1→2,
+ * QR confirmations immediately on step 4) rather than being held back for
+ * one big submit at the end — so leaving early via "Save & exit" never
+ * loses anything you already confirmed.
+ */
+
+const MONTH_NAMES_EN = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+const MONTH_NAMES_CS = [
+  'Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen',
+  'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec',
+];
+
+const STEP_COUNT = 5;
+
+function monthStart(offset: number): string {
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
+interface DueEntry {
+  item: LongTermItem;
+  cycle: ReserveCycle;
+  reserveDue: boolean;
+  paymentDue: boolean;
+}
+
+export default function MonthlyWizard() {
+  const { tokens } = useTheme();
+  const { user } = useAuth();
+  const { language, t } = useLanguage();
+
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [finished, setFinished] = useState(false);
+
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
+
+  const currentMonth = useMemo(() => monthStart(0), []);
+  const prevMonth = useMemo(() => monthStart(-1), []);
+  const monthLabel = useMemo(() => {
+    const [y, m] = currentMonth.split('-');
+    const names = language === 'cs' ? MONTH_NAMES_CS : MONTH_NAMES_EN;
+    return `${names[Number(m) - 1]} ${y}`;
+  }, [currentMonth, language]);
+  const prevMonthLabel = useMemo(() => {
+    const [y, m] = prevMonth.split('-');
+    const names = language === 'cs' ? MONTH_NAMES_CS : MONTH_NAMES_EN;
+    return `${names[Number(m) - 1]} ${y}`;
+  }, [prevMonth, language]);
+
+  // ── Step 1 — this month's budgets (editable) ────────────────────────
+  const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
+  const [savingBudgets, setSavingBudgets] = useState(false);
+
+  // ── Step 2 — last month recap (read-only) ────────────────────────────
+  const [prevPlannedByCategory, setPrevPlannedByCategory] = useState<Record<string, number>>({});
+  const [prevActualByCategory, setPrevActualByCategory] = useState<Record<string, number>>({});
+  const [prevIncome, setPrevIncome] = useState(0);
+  const [prevSpent, setPrevSpent] = useState(0);
+
+  // ── Steps 3–4 — long-term & reserve ──────────────────────────────────
+  const [longTermItems, setLongTermItems] = useState<LongTermItem[]>([]);
+  const [longTermTx, setLongTermTx] = useState<LongTermTx[]>([]);
+  const [openQrItemId, setOpenQrItemId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [confirmedThisSession, setConfirmedThisSession] = useState<Set<string>>(new Set());
+
+  const load = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    const [categoriesRes, accountsRes, profileRes, budgetsRes, prevBudgetsRes, prevTxRes, longTermRes, longTermTxRes] =
+      await Promise.all([
+        supabase
+          .from('categories')
+          .select('*')
+          .eq('owner_id', user.id)
+          .eq('category_type', 'EXPENSE')
+          .eq('active', true)
+          .order('sort_order'),
+        supabase.from('accounts').select('*').eq('owner_id', user.id).eq('active', true).order('sort_order'),
+        supabase.from('profile').select('default_account_id').eq('id', user.id).maybeSingle(),
+        supabase
+          .from('monthly_budgets')
+          .select('category_id, planned_amount')
+          .eq('owner_id', user.id)
+          .eq('budget_month', currentMonth),
+        supabase
+          .from('monthly_budgets')
+          .select('category_id, planned_amount')
+          .eq('owner_id', user.id)
+          .eq('budget_month', prevMonth),
+        supabase
+          .from('transactions')
+          .select('type, amount, category_id')
+          .eq('owner_id', user.id)
+          .eq('budget_month', prevMonth)
+          .eq('status', 'PAID'),
+        supabase.from('long_term_items').select('*').eq('owner_id', user.id).eq('active', true).order('name'),
+        // No date filter — see planning.tsx's identical comment: a
+        // repeat_yearly item's window can cross a calendar-year boundary.
+        supabase
+          .from('transactions')
+          .select('long_term_item_id, type, amount, transaction_date')
+          .eq('owner_id', user.id)
+          .not('long_term_item_id', 'is', null),
+      ]);
+
+    const cats = categoriesRes.data ?? [];
+    setCategories(cats);
+    setAccounts(accountsRes.data ?? []);
+    setDefaultAccountId(profileRes.data?.default_account_id ?? null);
+
+    const planned: Record<string, number> = {};
+    for (const row of budgetsRes.data ?? []) planned[row.category_id] = row.planned_amount;
+    const drafts: Record<string, string> = {};
+    for (const cat of cats) drafts[cat.id] = String(planned[cat.id] ?? cat.default_monthly_budget ?? 0);
+    setBudgetDrafts(drafts);
+
+    const prevPlanned: Record<string, number> = {};
+    for (const row of prevBudgetsRes.data ?? []) prevPlanned[row.category_id] = row.planned_amount;
+    setPrevPlannedByCategory(prevPlanned);
+
+    const prevActual: Record<string, number> = {};
+    let income = 0;
+    let spent = 0;
+    for (const row of prevTxRes.data ?? []) {
+      if (row.type === 'EXPENSE') {
+        spent += row.amount;
+        if (row.category_id) prevActual[row.category_id] = (prevActual[row.category_id] ?? 0) + row.amount;
+      } else if (row.type === 'INCOME') {
+        income += row.amount;
+      }
+    }
+    setPrevActualByCategory(prevActual);
+    setPrevIncome(income);
+    setPrevSpent(spent);
+
+    setLongTermItems(longTermRes.data ?? []);
+    setLongTermTx((longTermTxRes.data ?? []) as LongTermTx[]);
+    setLoading(false);
+  }, [user, currentMonth, prevMonth]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function saveAllBudgets() {
+    if (!user) return;
+    setSavingBudgets(true);
+    const rows = categories
+      .map((cat) => {
+        const amount = Number(budgetDrafts[cat.id]);
+        if (Number.isNaN(amount) || amount < 0) return null;
+        return { owner_id: user.id, budget_month: currentMonth, category_id: cat.id, planned_amount: amount };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    if (rows.length > 0) {
+      await supabase.from('monthly_budgets').upsert(rows, { onConflict: 'owner_id,budget_month,category_id' });
+    }
+    setSavingBudgets(false);
+  }
+
+  async function goNext() {
+    if (step === 1) await saveAllBudgets();
+    setStep((s) => Math.min(STEP_COUNT, s + 1));
+  }
+  function goBack() {
+    setStep((s) => Math.max(1, s - 1));
+  }
+
+  const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
+  const categoryNameById = useMemo(() => new Map(categories.map((c) => [c.id, c.name])), [categories]);
+
+  const dueItems: DueEntry[] = useMemo(() => {
+    return longTermItems
+      .map((item) => {
+        const cycle = currentCycle(item);
+        return {
+          item,
+          cycle,
+          reserveDue: isReserveTransferDue(item, cycle, longTermTx),
+          paymentDue: isFinalPaymentDue(item, cycle, longTermTx),
+        };
+      })
+      .filter((entry) => entry.reserveDue || entry.paymentDue);
+  }, [longTermItems, longTermTx]);
+
+  async function handleConfirmReserve(entry: DueEntry, amount: number) {
+    if (!user) return;
+    const accountId = entry.item.reserve_account_id ?? defaultAccountId;
+    if (!accountId) return;
+    setConfirmingId(entry.item.id);
+    const { error } = await confirmReserveTransfer(user.id, entry.item, amount, accountId);
+    setConfirmingId(null);
+    if (!error) {
+      setConfirmedThisSession((prev) => new Set(prev).add(entry.item.id));
+      setOpenQrItemId(null);
+      load();
+    }
+  }
+
+  async function handleConfirmFinal(entry: DueEntry) {
+    if (!user) return;
+    const accountId = entry.item.reserve_account_id ?? defaultAccountId;
+    if (!accountId) return;
+    setConfirmingId(entry.item.id);
+    const { error } = await confirmFinalPayment(user.id, entry.item, entry.item.full_payment_amount, accountId);
+    setConfirmingId(null);
+    if (!error) {
+      setConfirmedThisSession((prev) => new Set(prev).add(entry.item.id));
+      setOpenQrItemId(null);
+      load();
+    }
+  }
+
+  return (
+    <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
+      <View style={styles.header}>
+        <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 13, letterSpacing: 1 }}>
+          KASIČKA
+        </Text>
+        <Link href="/(app)/planning" asChild>
+          <Pressable>
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+              {t('wizard.saveExit')}
+            </Text>
+          </Pressable>
+        </Link>
+      </View>
+
+      <View style={styles.stepper}>
+        {Array.from({ length: STEP_COUNT }, (_, i) => i + 1).map((n) => (
+          <View
+            key={n}
+            style={[
+              styles.stepDot,
+              { backgroundColor: n <= step ? tokens.accent : tokens.cardAlt, borderColor: tokens.border },
+            ]}
+          />
+        ))}
+        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginLeft: 8 }}>
+          {t('wizard.stepLabel')} {step}/{STEP_COUNT}
+        </Text>
+      </View>
+
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body}>
+        {loading ? (
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>{t('common.loading')}</Text>
+        ) : (
+          <>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 22, marginBottom: 4 }}>
+              {t(`wizard.step${step}Title`)}
+            </Text>
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13, marginBottom: 22 }}>
+              {t(`wizard.step${step}Hint`)}
+            </Text>
+
+            {/* ── Step 1 — confirm budgets ─────────────────────────── */}
+            {step === 1 && (
+              <View>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 14 }}>
+                  {monthLabel}
+                </Text>
+                {categories.length === 0 && (
+                  <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+                    {t('overview.noCategoriesYet')}
+                  </Text>
+                )}
+                {categories.map((cat) => (
+                  <View
+                    key={cat.id}
+                    style={[styles.budgetRow, { backgroundColor: tokens.card, borderColor: tokens.border }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14, flex: 1 }}>
+                      {cat.name}
+                    </Text>
+                    <TextInput
+                      value={budgetDrafts[cat.id] ?? ''}
+                      onChangeText={(v) => setBudgetDrafts((prev) => ({ ...prev, [cat.id]: v }))}
+                      keyboardType="numeric"
+                      style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border }]}
+                    />
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                      {t('common.czk')}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* ── Step 2 — last month recap ────────────────────────── */}
+            {step === 2 && (
+              <View>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 14 }}>
+                  {prevMonthLabel}
+                </Text>
+                <View style={styles.cardsRow}>
+                  <View style={[styles.statCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                      {t('overview.income')}
+                    </Text>
+                    <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 18, marginTop: 4 }}>
+                      +{prevIncome} {t('common.czk')}
+                    </Text>
+                  </View>
+                  <View style={[styles.statCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                      {t('overview.spent')}
+                    </Text>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 18, marginTop: 4 }}>
+                      −{prevSpent} {t('common.czk')}
+                    </Text>
+                  </View>
+                  <View style={[styles.statCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                      {t('overview.net')}
+                    </Text>
+                    <Text
+                      style={{
+                        color: prevIncome - prevSpent >= 0 ? tokens.greenFg : tokens.coral,
+                        fontFamily: fontFamily.bold,
+                        fontSize: 18,
+                        marginTop: 4,
+                      }}
+                    >
+                      {prevIncome - prevSpent >= 0 ? '+' : ''}
+                      {prevIncome - prevSpent} {t('common.czk')}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={{ marginTop: 22 }}>
+                  {categories.map((cat) => {
+                    const planned = prevPlannedByCategory[cat.id] ?? cat.default_monthly_budget ?? 0;
+                    const actual = prevActualByCategory[cat.id] ?? 0;
+                    const pct = planned > 0 ? Math.min(actual / planned, 1) : actual > 0 ? 1 : 0;
+                    const over = planned > 0 && actual > planned;
+                    return (
+                      <View key={cat.id} style={{ marginBottom: 16 }}>
+                        <View style={styles.budgetRowTop}>
+                          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13.5 }}>
+                            {cat.name}
+                          </Text>
+                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                            {actual} / {planned} {t('common.czk')}
+                          </Text>
+                        </View>
+                        <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt }]}>
+                          <View
+                            style={[
+                              styles.barFill,
+                              { width: `${Math.round(pct * 100)}%`, backgroundColor: over ? tokens.coral : tokens.accent },
+                            ]}
+                          />
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
+
+            {/* ── Step 3 — long-term & reserve overview ────────────── */}
+            {step === 3 && (
+              <View>
+                {longTermItems.length === 0 && (
+                  <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+                    {t('more.noLongTerm')}
+                  </Text>
+                )}
+                {longTermItems.map((item) => {
+                  const cycle = currentCycle(item);
+                  const { reserved, pct } = accrualProgress(item, cycle, longTermTx);
+                  return (
+                    <View key={item.id} style={[styles.ltCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{item.name}</Text>
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 2 }}>
+                        {categoryNameById.get(item.category_id) ?? '—'} · {t('more.longTermPaymentMonth')}{' '}
+                        {cycle.paymentMonth.slice(0, 7)}
+                      </Text>
+                      <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt, marginTop: 10 }]}>
+                        <View style={[styles.barFill, { width: `${Math.round(pct * 100)}%`, backgroundColor: tokens.accent }]} />
+                      </View>
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 4 }}>
+                        {reserved} / {item.full_payment_amount} {t('common.czk')} {t('more.longTermReserved')}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* ── Step 4 — generate QR payments for what's due ─────── */}
+            {step === 4 && (
+              <View>
+                {dueItems.length === 0 && (
+                  <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+                    {t('wizard.noneDue')}
+                  </Text>
+                )}
+                {dueItems.map((entry) => {
+                  const { item, cycle, reserveDue, paymentDue } = entry;
+                  const reserveAmount = monthlyReserveAmount(item, cycle, longTermTx);
+                  const reserveAccount = item.reserve_account_id ? accountById.get(item.reserve_account_id) ?? null : null;
+                  const qrPayload = paymentDue
+                    ? finalPaymentQrPayload(item)
+                    : reserveTransferQrPayload(item, reserveAccount, reserveAmount);
+                  const amount = paymentDue ? item.full_payment_amount : reserveAmount;
+                  const open = openQrItemId === item.id;
+                  const justConfirmed = confirmedThisSession.has(item.id);
+
+                  return (
+                    <View key={item.id} style={[styles.ltCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                            {item.name}
+                          </Text>
+                          <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 12, marginTop: 2 }}>
+                            {paymentDue ? t('wizard.finalPaymentLabel') : t('wizard.reserveTransferLabel')} ·{' '}
+                            {amount} {t('common.czk')}
+                          </Text>
+                        </View>
+                        {justConfirmed && (
+                          <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 12 }}>✓</Text>
+                        )}
+                      </View>
+
+                      {!open ? (
+                        <Pressable
+                          onPress={() => setOpenQrItemId(item.id)}
+                          style={[styles.smallBtn, { backgroundColor: tokens.accent, marginTop: 10, alignSelf: 'flex-start' }]}
+                        >
+                          <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                            {t('wizard.generateQr')}
+                          </Text>
+                        </Pressable>
+                      ) : (
+                        <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
+                          {qrPayload ? (
+                            <View style={[styles.qrWhite, { marginBottom: 10 }]}>
+                              <QRCode value={qrPayload} size={140} />
+                            </View>
+                          ) : (
+                            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, marginBottom: 10 }}>
+                              {t('wizard.noQrAvailable')}
+                            </Text>
+                          )}
+                          <View style={{ flexDirection: 'row', gap: 8 }}>
+                            <Pressable
+                              onPress={() => (paymentDue ? handleConfirmFinal(entry) : handleConfirmReserve(entry, reserveAmount))}
+                              disabled={confirmingId === item.id}
+                              style={[
+                                styles.smallBtn,
+                                { backgroundColor: tokens.accent, opacity: confirmingId === item.id ? 0.6 : 1 },
+                              ]}
+                            >
+                              <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                {t('wizard.markDone')}
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              onPress={() => setOpenQrItemId(null)}
+                              style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                            >
+                              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                {t('common.cancel')}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            {/* ── Step 5 — finish ──────────────────────────────────── */}
+            {step === 5 && (
+              <View>
+                {!finished ? (
+                  <>
+                    <View style={[styles.checklistRow, { borderColor: tokens.border }]}>
+                      <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 15 }}>✓</Text>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 14, marginLeft: 10 }}>
+                        {t('wizard.budgetsConfirmedFor')} {monthLabel}
+                      </Text>
+                    </View>
+                    <View style={[styles.checklistRow, { borderColor: tokens.border }]}>
+                      <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 15 }}>✓</Text>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 14, marginLeft: 10 }}>
+                        {confirmedThisSession.size} {t('wizard.paymentsConfirmedThisSession')}
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => setFinished(true)}
+                      style={[styles.primaryBtn, { backgroundColor: tokens.accent, marginTop: 24 }]}
+                    >
+                      <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
+                        {t('wizard.finishReview')}
+                      </Text>
+                    </Pressable>
+                  </>
+                ) : (
+                  <View style={[styles.claimedBox, { backgroundColor: tokens.greenBg }]}>
+                    <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 16, marginBottom: 14 }}>
+                      {t('wizard.reviewFinished')}
+                    </Text>
+                    <Link href="/(app)/planning" asChild>
+                      <Pressable style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
+                        <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                          {t('wizard.backToPlanning')}
+                        </Text>
+                      </Pressable>
+                    </Link>
+                  </View>
+                )}
+              </View>
+            )}
+          </>
+        )}
+      </ScrollView>
+
+      {!loading && !(step === 5 && finished) && (
+        <View style={[styles.footer, { borderTopColor: tokens.border }]}>
+          <Pressable
+            onPress={goBack}
+            disabled={step === 1}
+            style={[styles.footerBtn, { backgroundColor: tokens.cardAlt, opacity: step === 1 ? 0.4 : 1 }]}
+          >
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{t('wizard.back')}</Text>
+          </Pressable>
+          {step < STEP_COUNT && (
+            <Pressable
+              onPress={goNext}
+              disabled={savingBudgets}
+              style={[styles.footerBtn, { backgroundColor: tokens.accent, opacity: savingBudgets ? 0.6 : 1 }]}
+            >
+              <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                {savingBudgets ? t('common.saving') : t('wizard.next')}
+              </Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  screen: { flex: 1, paddingHorizontal: 28, paddingTop: 18 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
+  stepper: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
+  stepDot: { width: 30, height: 6, borderRadius: 3, borderWidth: 1, marginRight: 6 },
+  body: { paddingBottom: 40, maxWidth: 620, width: '100%', alignSelf: 'center' },
+  budgetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 8,
+  },
+  budgetInput: { width: 90, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, textAlign: 'right' },
+  budgetRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
+  barTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  barFill: { height: 8, borderRadius: 4 },
+  cardsRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
+  statCard: { flex: 1, minWidth: 130, borderWidth: 1, borderRadius: 14, padding: 14 },
+  ltCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginBottom: 10 },
+  smallBtn: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 9 },
+  qrWhite: { backgroundColor: '#ffffff', padding: 10, borderRadius: 10, alignSelf: 'flex-start' },
+  checklistRow: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 12, padding: 14, marginBottom: 10 },
+  primaryBtn: { paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  claimedBox: { padding: 20, borderRadius: 16, alignItems: 'center' },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 16,
+    borderTopWidth: 1,
+    maxWidth: 620,
+    width: '100%',
+    alignSelf: 'center',
+  },
+  footerBtn: { flex: 1, paddingVertical: 13, borderRadius: 10, alignItems: 'center' },
+});

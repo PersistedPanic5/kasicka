@@ -10,7 +10,8 @@ const NAV_ITEMS = [
   { href: '/(app)/overview', labelKey: 'nav.overview' },
   { href: '/(app)/debts', labelKey: 'nav.debts' },
   { href: '/(app)/transactions', labelKey: 'nav.transactions' },
-  { href: '/(app)/more', labelKey: 'nav.more' },
+  { href: '/(app)/planning', labelKey: 'nav.planning' },
+  { href: '/(app)/settings', labelKey: 'nav.settings' },
 ] as const;
 
 /**

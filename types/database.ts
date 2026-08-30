@@ -117,6 +117,10 @@ export interface Transaction {
    * suggestion (source = 'RECURRING') — see supabase/migrations/
    * 0004_recurring_and_push.sql and lib/recurring.ts. */
   recurring_item_id: string | null;
+  /** Set only on RESERVE_TRANSFER / PAYMENT_FROM_RESERVE transactions
+   * generated from the monthly wizard's QR step (source = 'LONG_TERM_QR')
+   * — see supabase/migrations/0005_long_term_links.sql and lib/long-term.ts. */
+  long_term_item_id: string | null;
   created_at: string;
   updated_at: string;
 }

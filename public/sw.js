@@ -15,9 +15,9 @@ self.addEventListener('activate', (event) => {
 
 // The payload sent by supabase/functions/check-recurring-due is a JSON
 // object: { title, body, url }. `url` is where a tap should land — the
-// More → Recurring items section by default.
+// Planning tab (Recurring items / Long-term & reserve) by default.
 self.addEventListener('push', (event) => {
-  let data = { title: 'Kasička', body: 'You have a notification.', url: '/more' };
+  let data = { title: 'Kasička', body: 'You have a notification.', url: '/planning' };
   try {
     if (event.data) data = { ...data, ...event.data.json() };
   } catch (err) {
@@ -37,7 +37,7 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification.data?.url || '/more';
+  const targetUrl = event.notification.data?.url || '/planning';
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {

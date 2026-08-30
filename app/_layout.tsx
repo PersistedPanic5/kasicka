@@ -54,6 +54,7 @@ export default function RootLayout() {
                 <Stack.Screen name="sign-in" />
                 <Stack.Screen name="(mobile)" />
                 <Stack.Screen name="(app)" />
+                <Stack.Screen name="wizard" />
                 <Stack.Screen name="d/[token]" />
               </Stack>
             </AuthGate>
