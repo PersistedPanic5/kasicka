@@ -140,6 +140,8 @@ const en = {
     accountTypeSavings: 'Savings',
     accountTypeReserve: 'Reserve',
     accountTypeCard: 'Card',
+    rename: 'Rename',
+    renameCategoryTitle: 'Rename category',
   },
   overview: {
     title: 'Overview',
@@ -293,6 +295,8 @@ const cs: Dict = {
     accountTypeSavings: 'Spořicí',
     accountTypeReserve: 'Rezerva',
     accountTypeCard: 'Karta',
+    rename: 'Přejmenovat',
+    renameCategoryTitle: 'Přejmenovat kategorii',
   },
   overview: {
     title: 'Přehled',

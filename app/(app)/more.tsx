@@ -41,6 +41,9 @@ export default function More() {
 
   const [newCategoryName, setNewCategoryName] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingCategoryName, setEditingCategoryName] = useState('');
+  const [savingCategoryRename, setSavingCategoryRename] = useState(false);
 
   const [newAccountName, setNewAccountName] = useState('');
   const [newAccountType, setNewAccountType] = useState<AccountType>('BANK');
@@ -83,6 +86,27 @@ export default function More() {
 
   async function toggleCategoryActive(cat: Category) {
     await supabase.from('categories').update({ active: !cat.active }).eq('id', cat.id);
+    load();
+  }
+
+  function startEditCategory(cat: Category) {
+    setEditingCategoryId(cat.id);
+    setEditingCategoryName(cat.name);
+  }
+
+  function cancelEditCategory() {
+    setEditingCategoryId(null);
+    setEditingCategoryName('');
+  }
+
+  async function saveCategoryRename() {
+    const name = editingCategoryName.trim();
+    if (!editingCategoryId || !name) return;
+    setSavingCategoryRename(true);
+    await supabase.from('categories').update({ name }).eq('id', editingCategoryId);
+    setSavingCategoryRename(false);
+    setEditingCategoryId(null);
+    setEditingCategoryName('');
     load();
   }
 
@@ -158,28 +182,68 @@ export default function More() {
                 {t('more.noCategories')}
               </Text>
             )}
-            {visibleCategories.map((cat) => (
-              <View key={cat.id} style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
-                <Text
-                  style={{
-                    color: cat.active ? tokens.text : tokens.textMuted,
-                    fontFamily: fontFamily.semibold,
-                    fontSize: 14,
-                    flex: 1,
-                  }}
-                >
-                  {cat.name}
-                </Text>
-                <Pressable
-                  onPress={() => toggleCategoryActive(cat)}
-                  style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
-                >
-                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-                    {cat.active ? t('more.archive') : t('more.unarchive')}
+            {visibleCategories.map((cat) =>
+              editingCategoryId === cat.id ? (
+                <View key={cat.id} style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                  <TextInput
+                    value={editingCategoryName}
+                    onChangeText={setEditingCategoryName}
+                    autoFocus
+                    placeholder={t('more.categoryNamePlaceholder')}
+                    placeholderTextColor={tokens.textMuted}
+                    style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1 }]}
+                    onSubmitEditing={saveCategoryRename}
+                  />
+                  <Pressable
+                    onPress={saveCategoryRename}
+                    disabled={savingCategoryRename || !editingCategoryName.trim()}
+                    style={[styles.smallBtn, { backgroundColor: tokens.accent }]}
+                  >
+                    <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                      {t('common.save')}
+                    </Text>
+                  </Pressable>
+                  <Pressable onPress={cancelEditCategory} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                      {t('common.cancel')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <View key={cat.id} style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                  <Text
+                    style={{
+                      color: cat.active ? tokens.text : tokens.textMuted,
+                      fontFamily: fontFamily.semibold,
+                      fontSize: 14,
+                      flex: 1,
+                    }}
+                  >
+                    {cat.name}
                   </Text>
-                </Pressable>
-              </View>
-            ))}
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    {cat.active && (
+                      <Pressable
+                        onPress={() => startEditCategory(cat)}
+                        style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                      >
+                        <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                          {t('more.rename')}
+                        </Text>
+                      </Pressable>
+                    )}
+                    <Pressable
+                      onPress={() => toggleCategoryActive(cat)}
+                      style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                        {cat.active ? t('more.archive') : t('more.unarchive')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              )
+            )}
 
             <View style={styles.addRow}>
               <TextInput

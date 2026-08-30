@@ -10,19 +10,54 @@ import { CATEGORY_NAMES } from '@/lib/theme';
  * one default cash account and the standard expense categories from
  * lib/theme.ts CATEGORY_NAMES (matching the Design canvas mockups).
  *
- * Safe to call on every login — it checks for an existing profile row
- * first and does nothing if one's already there, so it only actually runs
- * once per user.
+ * Safe to call on every login, including concurrently from multiple tabs or
+ * components (useAppData() is invoked independently from more than one
+ * screen). This used to check "does a profile row exist?" and then insert
+ * the account/categories/profile in three separate steps — that's a classic
+ * check-then-act race: two calls landing at the same moment can both pass
+ * the check before either insert completes, and both go on to create their
+ * own account + categories, leaving a duplicate "Cash" account behind.
+ *
+ * Fixed by inserting the `profile` row FIRST, with `default_account_id`
+ * left null (the column is nullable — see migration 0001, no `not null`
+ * there) and using its primary key (`profile.id references auth.users(id)`)
+ * as an atomic mutex: only the caller whose insert actually succeeds goes
+ * on to create the account + categories and then fills in
+ * default_account_id. A racing second call's insert fails with a unique/PK
+ * violation (Postgres error code 23505) — that's treated as "someone else
+ * already bootstrapped this user," not an error, and the call just returns.
  */
 export async function ensureBootstrapped(userId: string): Promise<void> {
   const { data: existingProfile } = await supabase
     .from('profile')
-    .select('id')
+    .select('id, default_account_id')
     .eq('id', userId)
     .maybeSingle();
 
-  if (existingProfile) return;
+  if (existingProfile) {
+    // Profile already exists. In the old race, a duplicate account/category
+    // set could still have been created by a second concurrent call before
+    // this fix shipped — but the profile row itself is unique per user, so
+    // once it's here there's nothing left for this call to do.
+    return;
+  }
 
+  // Claim the mutex: try to be the one caller who creates this user's
+  // profile row. default_account_id stays null until the account exists.
+  const { error: profileInsertError } = await supabase.from('profile').insert({ id: userId });
+
+  if (profileInsertError) {
+    // 23505 = unique_violation — another concurrent call won the race and
+    // already inserted this profile row first. That's expected and fine;
+    // that other call is responsible for creating the account/categories.
+    if (profileInsertError.code !== '23505') {
+      console.warn('[bootstrap] Failed to create the profile row', profileInsertError);
+    }
+    return;
+  }
+
+  // We won the race — we're the only caller that will reach this point for
+  // this user, so it's safe to create the account and categories now.
   const { data: account, error: accountError } = await supabase
     .from('accounts')
     .insert({ owner_id: userId, name: 'Cash', account_type: 'CASH' })
@@ -46,11 +81,11 @@ export async function ensureBootstrapped(userId: string): Promise<void> {
     console.warn('[bootstrap] Failed to create default categories', categoriesError);
   }
 
-  const { error: profileError } = await supabase.from('profile').insert({
-    id: userId,
-    default_account_id: account.id,
-  });
-  if (profileError) {
-    console.warn('[bootstrap] Failed to create the profile row', profileError);
+  const { error: updateError } = await supabase
+    .from('profile')
+    .update({ default_account_id: account.id })
+    .eq('id', userId);
+  if (updateError) {
+    console.warn('[bootstrap] Failed to link the default account to the profile', updateError);
   }
 }
