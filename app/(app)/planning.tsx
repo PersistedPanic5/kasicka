@@ -409,7 +409,7 @@ export default function Planning() {
       <View style={styles.headerRow}>
         <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 24 }}>{t('more.planningTitle')}</Text>
         <Link href="/wizard" asChild>
-          <Pressable style={[styles.wizardBtn, { backgroundColor: tokens.accent }]}>
+          <Pressable style={StyleSheet.flatten([styles.wizardBtn, { backgroundColor: tokens.accent }])}>
             <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 13 }}>
               {t('more.startMonthlyReview')}
               {longTermDueCount > 0 ? ` (${longTermDueCount})` : ''}

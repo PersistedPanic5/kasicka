@@ -557,7 +557,7 @@ export default function MonthlyWizard() {
                       {t('wizard.reviewFinished')}
                     </Text>
                     <Link href="/(app)/planning" asChild>
-                      <Pressable style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
+                      <Pressable style={StyleSheet.flatten([styles.primaryBtn, { backgroundColor: tokens.accent }])}>
                         <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
                           {t('wizard.backToPlanning')}
                         </Text>
