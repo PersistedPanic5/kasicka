@@ -111,6 +111,18 @@ ready:
 
 ## Known scaffold-stage details worth knowing about
 
+- **Reloading any page directly (not just `/d/<token>`) needs
+  `vercel.json`'s `"cleanUrls": true`.** Because the Framework Preset is
+  set to "Other" (see the 404-on-Visit fix below), Vercel doesn't
+  auto-serve `foo.html` for a request to `/foo` unless `cleanUrls` is on
+  — without it, client-side navigation inside the app always worked (the
+  browser never makes a real request), but a hard reload on `/debts`,
+  `/transactions`, etc. hit Vercel's static file server directly and got
+  a real 404, since there's no file literally named `debts` (no
+  extension) in the output. `cleanUrls: true` tells Vercel to try
+  `<path>.html` for any extensionless request — this coexists fine with
+  the `/d/:token` rewrite below, which still takes priority since it's
+  an explicit match.
 - **The public debt-share link (`/d/[token]`) needs a build workaround
   to work on a static host.** Expo Router's static web export can't
   pre-render a truly dynamic route — it has no way to know share tokens
