@@ -6,10 +6,14 @@ Google Apps Script prototype ("Budgetor"). Full planning docs (requirements,
 data model, architecture, screens, roadmap) live in the Claude project this
 was built alongside, not in this repo.
 
-Current status: **Phase 0 scaffold** — routing, theme, Supabase schema, and
-types exist; no real backend is connected yet and most screens are
-structural placeholders. See `build-roadmap-v1.md` (in the Claude project)
-for what's next.
+Current status: **Phases 0–2 largely built and live at kasicka.eu** —
+Accounts/Categories/Recurring items CRUD, the mobile fast-entry screen
+(with account + receipt-photo panel), the desktop admin shell (Home,
+Overview, Debts, Transactions, More), the public debt-share/QR flow,
+localization (EN/CZ), and a Web Push notifications foundation for due
+recurring items. See `build-roadmap-v1.md` (in the Claude project) for
+exactly what's done vs. still open — Phase 3 (long-term/reserve payments +
+the monthly wizard) is next.
 
 ## Stack
 
@@ -72,9 +76,12 @@ git push -u origin main
 
 1. Sign up / log in at [supabase.com](https://supabase.com), create a new
    project (free tier is enough — see architecture doc "Cost").
-2. In the project's SQL Editor, run the two files in `supabase/migrations/`
-   **in order** (`0001_initial_schema.sql`, then
-   `0002_public_debt_share.sql`) — paste each in and run it.
+2. In the project's SQL Editor, run every file in `supabase/migrations/`
+   **in numeric order** (`0001_initial_schema.sql`, `0002_public_debt_share.sql`,
+   `0003_debt_message.sql`, `0004_recurring_and_push.sql`) — paste each in
+   and run it. `0004` also creates a private `receipts` Storage bucket
+   (used by the entry form's photo capture) — nothing extra to do there,
+   the migration handles it.
 3. In **Authentication → Providers**, enable Google, and follow Supabase's
    instructions to create a Google OAuth client (this happens in Google
    Cloud Console — a free Google Cloud project just for the OAuth
@@ -157,3 +164,16 @@ ready:
   Once the Supabase project exists, replace it with the real generated
   types (`npx supabase gen types typescript --project-id <id> > types/database.ts`)
   so it can never silently drift from the actual schema again.
+- **Web Push (recurring-item due notifications) needs one-time manual
+  setup** — a VAPID key pair, an Edge Function deploy, and a daily
+  schedule. This can't be scripted from a Claude session since it needs
+  your own Supabase CLI login and project credentials — full step-by-step
+  in `supabase/functions/check-recurring-due/README.md`. Until that setup
+  is done, the app works fine — the More screen's notifications toggle
+  just stays hidden (it only shows once `EXPO_PUBLIC_VAPID_PUBLIC_KEY` is
+  set).
+- **Receipt photo capture is web-only for now** — it uses a plain HTML
+  file input (`capture="environment"` opens the phone camera directly from
+  the browser), which works great as a PWA but has no native-app
+  equivalent wired up yet. Native (via `expo-image-picker`) is a follow-up
+  once a real native build exists, matching the PWA-first decision.

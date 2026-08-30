@@ -2,11 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { ensureBootstrapped } from '@/lib/bootstrap';
-import type { Category } from '@/types/database';
+import type { Account, Category } from '@/types/database';
 
 interface AppData {
   defaultAccountId: string | null;
   categories: Category[];
+  /** Active accounts, for the entry form's collapsed account picker —
+   * added alongside that panel (build-roadmap-v1.md Phase 1 remainder). */
+  accounts: Account[];
   /** True while the first-sign-in bootstrap and/or the fetch below is
    * still in flight — callers should disable Save rather than let it
    * write with a null account/category. */
@@ -27,12 +30,14 @@ export function useAppData(): AppData {
   const { user } = useAuth();
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => {
     if (!user) {
       setDefaultAccountId(null);
       setCategories([]);
+      setAccounts([]);
       setLoading(false);
       return;
     }
@@ -47,14 +52,16 @@ export function useAppData(): AppData {
         console.warn('[use-app-data] Bootstrap failed', err);
       }
 
-      const [profileRes, categoriesRes] = await Promise.all([
+      const [profileRes, categoriesRes, accountsRes] = await Promise.all([
         supabase.from('profile').select('default_account_id').eq('id', user.id).maybeSingle(),
         supabase.from('categories').select('*').eq('category_type', 'EXPENSE').order('sort_order'),
+        supabase.from('accounts').select('*').eq('active', true).order('sort_order'),
       ]);
 
       if (cancelled) return;
       setDefaultAccountId(profileRes.data?.default_account_id ?? null);
       setCategories(categoriesRes.data ?? []);
+      setAccounts(accountsRes.data ?? []);
       setLoading(false);
     })();
 
@@ -65,5 +72,5 @@ export function useAppData(): AppData {
 
   useEffect(() => refresh(), [refresh]);
 
-  return { defaultAccountId, categories, loading, refresh };
+  return { defaultAccountId, categories, accounts, loading, refresh };
 }

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { createElement, useMemo, useRef, useState } from 'react';
+import { Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -26,15 +26,28 @@ import { useLanguage } from '@/lib/language-context';
  * description/QR message too, unless the split panel's own "message"
  * field overrides it for that debt specifically. account_id/category_id
  * come from useAppData (the signed-in user's bootstrap-created default
- * account + expense categories — see lib/bootstrap.ts). Still not built
- * here: the collapsed "more options" panel (account/photo) — later
- * Phase 1 work per build-roadmap-v1.md.
+ * account + expense categories — see lib/bootstrap.ts).
+ *
+ * The collapsed "more options" panel (account/photo) — the last piece of
+ * Phase 1, per build-roadmap-v1.md — is a single toggle revealing: an
+ * account pill-switcher (defaults to profile.default_account_id, same as
+ * before, just now overridable per-entry) and a receipt photo capture.
+ * Photo capture is web-only for now (a plain hidden <input type="file"
+ * capture="environment"> — the standard way to hit the phone camera from a
+ * PWA without a native module); a native picker (expo-image-picker) is a
+ * follow-up once a real native build exists, matching the PWA-first
+ * decision in architecture-v1.md. The file uploads straight to the private
+ * "receipts" Supabase Storage bucket (supabase/migrations/
+ * 0004_recurring_and_push.sql) under a <user_id>/<filename> path, and the
+ * returned storage *path* (not a public URL — the bucket isn't public) is
+ * what's saved to transactions.receipt_photo_url; viewing it later means
+ * generating a signed URL from that path.
  */
 export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 'desktop' }) {
   const { tokens } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
-  const { defaultAccountId, categories, loading: dataLoading } = useAppData();
+  const { defaultAccountId, categories, accounts, loading: dataLoading } = useAppData();
 
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -50,9 +63,18 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [shareLink, setShareLink] = useState<string | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [photoPath, setPhotoPath] = useState<string | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Categories load asynchronously right after sign-in (first-run
   // bootstrap creates them) — default to the first one once they arrive.
   const activeCategoryId = categoryId ?? categories[0]?.id ?? null;
+  const activeAccountId = selectedAccountId ?? defaultAccountId;
 
   const quickAmounts = [20, 50, 100, 200]; // TODO: profile.amount_buttons (More → Profile)
 
@@ -76,11 +98,42 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     return `/d/${token}`;
   }
 
+  function triggerPhotoPicker() {
+    fileInputRef.current?.click();
+  }
+
+  function clearPhoto() {
+    setPhotoPath(null);
+    setPhotoPreviewUrl(null);
+    setPhotoError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function handlePhotoChange(e: { target: { files: FileList | null } }) {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setPhotoError(null);
+    setPhotoUploading(true);
+    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'jpg';
+    const path = `${user.id}/${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from('receipts').upload(path, file, {
+      contentType: file.type || 'image/jpeg',
+    });
+    if (error) {
+      setPhotoError(error.message);
+      setPhotoUploading(false);
+      return;
+    }
+    setPhotoPath(path);
+    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setPhotoUploading(false);
+  }
+
   async function handleSave() {
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) return;
 
-    if (!user || !defaultAccountId || !activeCategoryId) {
+    if (!user || !activeAccountId || !activeCategoryId) {
       setErrorMsg(t('home.settingUpAccount'));
       return;
     }
@@ -108,10 +161,11 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         budget_month: budgetMonth,
         transaction_date: transactionDate,
         type: 'EXPENSE',
-        account_id: defaultAccountId,
+        account_id: activeAccountId,
         category_id: activeCategoryId,
         amount: numericAmount,
         note: note.trim() || null,
+        receipt_photo_url: photoPath,
       })
       .select('id')
       .single();
@@ -130,7 +184,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
           transaction_id: transaction.id,
           owed_by_name: splitName.trim(),
           amount: numericSplit,
-          target_account_id: defaultAccountId,
+          target_account_id: activeAccountId,
           message: splitMessage.trim() || null,
         })
         .select('share_token')
@@ -154,6 +208,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setSplitAmount('');
     setSplitMessage('');
     setLinkCopied(false);
+    setSelectedAccountId(null);
+    clearPhoto();
     setSaving(false);
   }
 
@@ -244,6 +300,89 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         style={[styles.noteInput, { color: tokens.text, borderColor: tokens.border }]}
       />
 
+      <Pressable onPress={() => setShowMoreOptions((v) => !v)} style={styles.splitToggle}>
+        <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+          {showMoreOptions ? t('home.moreOptionsHide') : t('home.moreOptionsShow')}
+        </Text>
+      </Pressable>
+
+      {showMoreOptions && (
+        <View style={[styles.splitPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 6 }}>
+            {t('home.accountLabel')}
+          </Text>
+          <View style={styles.chipRow}>
+            {accounts.map((acc) => {
+              const active = activeAccountId === acc.id;
+              return (
+                <Pressable
+                  key={acc.id}
+                  onPress={() => setSelectedAccountId(acc.id)}
+                  style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.cardAlt }]}
+                >
+                  <Text
+                    style={{
+                      color: active ? tokens.accentText : tokens.text,
+                      fontFamily: fontFamily.semibold,
+                      fontSize: 12.5,
+                    }}
+                  >
+                    {acc.name}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <Text
+            style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 12, marginBottom: 6 }}
+          >
+            {t('home.receiptPhotoLabel')}
+          </Text>
+          {Platform.OS === 'web' ? (
+            <>
+              {photoPreviewUrl ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <Image source={{ uri: photoPreviewUrl }} style={styles.photoPreview} />
+                  <Pressable onPress={clearPhoto}>
+                    <Text style={{ color: tokens.coral, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                      {t('common.delete')}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={triggerPhotoPicker}
+                  disabled={photoUploading}
+                  style={[styles.photoBtn, { backgroundColor: tokens.cardAlt, opacity: photoUploading ? 0.6 : 1 }]}
+                >
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                    {photoUploading ? t('common.saving') : t('home.addPhoto')}
+                  </Text>
+                </Pressable>
+              )}
+              {photoError && (
+                <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 6 }}>
+                  {photoError}
+                </Text>
+              )}
+              {createElement('input', {
+                ref: fileInputRef,
+                type: 'file',
+                accept: 'image/*',
+                capture: 'environment',
+                style: { display: 'none' },
+                onChange: handlePhotoChange,
+              })}
+            </>
+          ) : (
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+              {t('home.photoWebOnly')}
+            </Text>
+          )}
+        </View>
+      )}
+
       <Pressable onPress={() => setSplitEnabled((v) => !v)} style={styles.splitToggle}>
         <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
           {splitEnabled ? t('home.splitToggleOff') : t('home.splitToggleOn')}
@@ -308,8 +447,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
       <Pressable
         onPress={handleSave}
-        disabled={saving || dataLoading}
-        style={[styles.saveBtn, { backgroundColor: tokens.accent, opacity: saving || dataLoading ? 0.6 : 1 }]}
+        disabled={saving || dataLoading || photoUploading}
+        style={[styles.saveBtn, { backgroundColor: tokens.accent, opacity: saving || dataLoading || photoUploading ? 0.6 : 1 }]}
       >
         <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
           {savedFlash ? t('home.savedBtn') : t('home.saveBtn')}
@@ -334,4 +473,6 @@ const styles = StyleSheet.create({
   shareBox: { borderRadius: 14, padding: 12 },
   copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
   saveBtn: { paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
+  photoBtn: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10 },
+  photoPreview: { width: 44, height: 44, borderRadius: 8 },
 });

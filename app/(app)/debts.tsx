@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Linking, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -60,6 +60,9 @@ export default function Debts() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
+  type DebtFilter = 'ALL' | DebtStatus;
+  const [filter, setFilter] = useState<DebtFilter>('ALL');
+
   const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
@@ -87,6 +90,19 @@ export default function Debts() {
       await navigator.clipboard.writeText(link);
       setCopiedId(debt.id);
       setTimeout(() => setCopiedId(null), 1500);
+    }
+  }
+
+  // "Show this directly to somebody" — opens the debtor's public page in a
+  // new tab (web) rather than making Pavel copy a link and paste it
+  // somewhere first. On native there's no tab concept, so it just opens the
+  // link in the system browser instead.
+  function openInNewTab(debt: DebtRow) {
+    const link = shareLink(debt.share_token);
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(link, '_blank', 'noopener,noreferrer');
+    } else {
+      Linking.openURL(link);
     }
   }
 
@@ -224,6 +240,19 @@ export default function Debts() {
   const awaitingConfirmation = debts.filter((d) => d.status === 'CLAIMED_PAID');
   const settled = debts.filter((d) => d.status === 'SETTLED');
 
+  const summary = useMemo(() => {
+    const total = outstanding.reduce((sum, d) => sum + Number(d.amount), 0);
+    const people = new Set(outstanding.map((d) => d.owed_by_name)).size;
+    return { total, people };
+  }, [outstanding]);
+
+  const filters: { key: DebtFilter; label: string }[] = [
+    { key: 'ALL', label: t('debts.filterAll') },
+    { key: 'OUTSTANDING', label: t('debts.outstanding') },
+    { key: 'CLAIMED_PAID', label: t('debts.awaitingConfirmation') },
+    { key: 'SETTLED', label: t('debts.settled') },
+  ];
+
   function DebtCard({ debt, action }: { debt: DebtRow; action?: 'settle' }) {
     const selected = selectedIds.has(debt.id);
     return (
@@ -256,11 +285,18 @@ export default function Debts() {
         {!selectMode && (
           <View style={styles.cardActions}>
             {debt.status !== 'SETTLED' && (
-              <Pressable onPress={() => copyLink(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
-                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-                  {copiedId === debt.id ? t('common.copied') : t('common.copyLink')}
-                </Text>
-              </Pressable>
+              <>
+                <Pressable onPress={() => copyLink(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                    {copiedId === debt.id ? t('common.copied') : t('common.copyLink')}
+                  </Text>
+                </Pressable>
+                <Pressable onPress={() => openInNewTab(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                    {t('debts.openLink')}
+                  </Text>
+                </Pressable>
+              </>
             )}
             {action === 'settle' && (
               <Pressable
@@ -329,19 +365,57 @@ export default function Debts() {
         </Pressable>
       </View>
 
+      {!loading && (
+        <>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13, marginBottom: 12 }}>
+            {summary.total > 0
+              ? `${summary.total} ${t('common.czk')} ${t('debts.outstanding').toLowerCase()} · ${summary.people} ${t('debts.people')}`
+              : t('debts.nobodyOwes')}
+          </Text>
+          <View style={[styles.filterRow]}>
+            {filters.map((f) => {
+              const active = filter === f.key;
+              return (
+                <Pressable
+                  key={f.key}
+                  onPress={() => setFilter(f.key)}
+                  style={[styles.filterChip, { backgroundColor: active ? tokens.accent : tokens.card }]}
+                >
+                  <Text
+                    style={{
+                      color: active ? tokens.accentText : tokens.text,
+                      fontFamily: fontFamily.semibold,
+                      fontSize: 12.5,
+                    }}
+                  >
+                    {f.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
+
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: selectMode ? 90 : 40 }}>
         {loading ? (
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>{t('common.loading')}</Text>
         ) : (
           <>
-            <Section
-              title={t('debts.awaitingConfirmation')}
-              items={awaitingConfirmation}
-              action="settle"
-              emptyNote={t('debts.nothingMarkedPaid')}
-            />
-            <Section title={t('debts.outstanding')} items={outstanding} emptyNote={t('debts.nobodyOwes')} />
-            <Section title={t('debts.settled')} items={settled} emptyNote={t('debts.noSettledYet')} />
+            {(filter === 'ALL' || filter === 'CLAIMED_PAID') && (
+              <Section
+                title={t('debts.awaitingConfirmation')}
+                items={awaitingConfirmation}
+                action="settle"
+                emptyNote={t('debts.nothingMarkedPaid')}
+              />
+            )}
+            {(filter === 'ALL' || filter === 'OUTSTANDING') && (
+              <Section title={t('debts.outstanding')} items={outstanding} emptyNote={t('debts.nobodyOwes')} />
+            )}
+            {(filter === 'ALL' || filter === 'SETTLED') && (
+              <Section title={t('debts.settled')} items={settled} emptyNote={t('debts.noSettledYet')} />
+            )}
           </>
         )}
       </ScrollView>
@@ -449,6 +523,8 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
   },
   section: { marginBottom: 28 },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
+  filterChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 10 },
   card: {
     flexDirection: 'row',
     alignItems: 'center',
