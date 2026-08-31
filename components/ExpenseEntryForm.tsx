@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
+import { budgetMonthForDate } from '@/lib/budget-month';
 
 /**
  * The fast expense-capture form — the single most important screen in the
@@ -47,7 +48,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const { tokens } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
-  const { defaultAccountId, categories, accounts, loading: dataLoading } = useAppData();
+  const { defaultAccountId, categories, accounts, monthStartDay, loading: dataLoading } = useAppData();
 
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
@@ -150,9 +151,9 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setShareLink(null);
 
     const transactionDate = shiftedDateISO(dayOffset);
-    // No month_start_day-aware budget cycle yet (that's the Monthly Wizard,
-    // Phase 3) — calendar month is the right default until then.
-    const budgetMonth = `${transactionDate.slice(0, 7)}-01`;
+    // month_start_day-aware — see lib/budget-month.ts. Defaults to plain
+    // calendar months until Settings → Profile & preferences sets it.
+    const budgetMonth = budgetMonthForDate(transactionDate, monthStartDay);
 
     const { data: transaction, error } = await supabase
       .from('transactions')

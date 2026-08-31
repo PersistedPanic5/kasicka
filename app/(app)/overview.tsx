@@ -5,18 +5,10 @@ import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
+import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
 import type { Category } from '@/types/database';
 
 type CategoryRow = Pick<Category, 'id' | 'name' | 'default_monthly_budget'>;
-
-const MONTH_NAMES_EN = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-const MONTH_NAMES_CS = [
-  'Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen',
-  'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec',
-];
 
 /**
  * Overview — build-roadmap-v1.md Phase 1: month switcher, income/spent/net
@@ -28,6 +20,13 @@ const MONTH_NAMES_CS = [
  * A category with no monthly_budgets row yet for the selected month falls
  * back to its own `default_monthly_budget` (a field the schema already
  * had for exactly this) so a fresh month isn't all zeros.
+ *
+ * The month switcher walks whole budget-month cycles, not calendar months
+ * — `profile.month_start_day` (Settings → Profile & preferences, see
+ * lib/budget-month.ts) can move where a cycle starts/ends. `monthStartDay`
+ * is fetched once, separately from the per-month `load()` below, and
+ * `budgetMonth` stays `null` until it resolves so `load()` never fires
+ * against a wrong (default-calendar-month) bucket for a split second.
  */
 export default function Overview() {
   const { tokens } = useTheme();
@@ -35,6 +34,7 @@ export default function Overview() {
   const { language, t } = useLanguage();
 
   const [monthOffset, setMonthOffset] = useState(0);
+  const [monthStartDay, setMonthStartDay] = useState<number | null>(null);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [plannedByCategory, setPlannedByCategory] = useState<Record<string, number>>({});
   const [actualByCategory, setActualByCategory] = useState<Record<string, number>>({});
@@ -46,21 +46,34 @@ export default function Overview() {
   const [editValue, setEditValue] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const budgetMonth = useMemo(() => {
-    const d = new Date();
-    d.setDate(1);
-    d.setMonth(d.getMonth() + monthOffset);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-  }, [monthOffset]);
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    supabase
+      .from('profile')
+      .select('month_start_day')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setMonthStartDay(data?.month_start_day ?? 1);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
-  const monthLabel = useMemo(() => {
-    const [y, m] = budgetMonth.split('-');
-    const names = language === 'cs' ? MONTH_NAMES_CS : MONTH_NAMES_EN;
-    return `${names[Number(m) - 1]} ${y}`;
-  }, [budgetMonth, language]);
+  const budgetMonth = useMemo(
+    () => (monthStartDay !== null ? shiftBudgetMonth(currentBudgetMonth(monthStartDay), monthOffset) : null),
+    [monthStartDay, monthOffset]
+  );
+
+  const monthLabel = useMemo(
+    () => (budgetMonth && monthStartDay !== null ? formatBudgetMonthLabel(budgetMonth, monthStartDay, language) : ''),
+    [budgetMonth, monthStartDay, language]
+  );
 
   const load = useCallback(async () => {
-    if (!user) return;
+    if (!user || !budgetMonth) return;
     setLoading(true);
 
     const [categoriesRes, budgetsRes, transactionsRes] = await Promise.all([
@@ -121,7 +134,7 @@ export default function Overview() {
   }
 
   async function saveBudget(categoryId: string) {
-    if (!user) return;
+    if (!user || !budgetMonth) return;
     const amount = Number(editValue);
     if (Number.isNaN(amount) || amount < 0) {
       setEditingCategoryId(null);
@@ -152,7 +165,7 @@ export default function Overview() {
           >
             <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>−</Text>
           </Pressable>
-          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14, width: 140, textAlign: 'center' }}>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14, width: 190, textAlign: 'center' }}>
             {monthLabel}
           </Text>
           <Pressable

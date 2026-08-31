@@ -42,6 +42,8 @@ export default function Settings() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
+  const [monthStartDay, setMonthStartDay] = useState(1);
+  const [savingMonthStartDay, setSavingMonthStartDay] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showArchivedCategories, setShowArchivedCategories] = useState(false);
   const [showArchivedAccounts, setShowArchivedAccounts] = useState(false);
@@ -70,11 +72,12 @@ export default function Settings() {
     const [categoriesRes, accountsRes, profileRes] = await Promise.all([
       supabase.from('categories').select('*').eq('owner_id', user.id).order('sort_order'),
       supabase.from('accounts').select('*').eq('owner_id', user.id).order('sort_order'),
-      supabase.from('profile').select('default_account_id').eq('id', user.id).maybeSingle(),
+      supabase.from('profile').select('default_account_id, month_start_day').eq('id', user.id).maybeSingle(),
     ]);
     setCategories(categoriesRes.data ?? []);
     setAccounts(accountsRes.data ?? []);
     setDefaultAccountId(profileRes.data?.default_account_id ?? null);
+    setMonthStartDay(profileRes.data?.month_start_day ?? 1);
     setLoading(false);
   }, [user]);
 
@@ -158,6 +161,18 @@ export default function Settings() {
     if (!user) return;
     setDefaultAccountId(accountId);
     await supabase.from('profile').update({ default_account_id: accountId }).eq('id', user.id);
+  }
+
+  /** 1–28, matching the schema's check constraint (chosen so it's always a
+   * valid day regardless of month length) — see lib/budget-month.ts for
+   * what this actually changes. */
+  async function changeMonthStartDay(next: number) {
+    if (!user) return;
+    const clamped = Math.min(28, Math.max(1, next));
+    setMonthStartDay(clamped);
+    setSavingMonthStartDay(true);
+    await supabase.from('profile').update({ month_start_day: clamped }).eq('id', user.id);
+    setSavingMonthStartDay(false);
   }
 
   async function togglePush() {
@@ -469,6 +484,44 @@ export default function Settings() {
                     </Text>
                   </Pressable>
                 ))}
+              </View>
+            </View>
+
+            <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border, marginTop: 8 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                  {t('more.monthStartDay')}
+                </Text>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 2 }}>
+                  {t('more.monthStartDayHint')}
+                </Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <Pressable
+                  onPress={() => changeMonthStartDay(monthStartDay - 1)}
+                  disabled={savingMonthStartDay || monthStartDay <= 1}
+                  style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: monthStartDay <= 1 ? 0.4 : 1 }]}
+                >
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>−</Text>
+                </Pressable>
+                <Text
+                  style={{
+                    color: tokens.text,
+                    fontFamily: fontFamily.bold,
+                    fontSize: 14,
+                    width: 28,
+                    textAlign: 'center',
+                  }}
+                >
+                  {monthStartDay}
+                </Text>
+                <Pressable
+                  onPress={() => changeMonthStartDay(monthStartDay + 1)}
+                  disabled={savingMonthStartDay || monthStartDay >= 28}
+                  style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: monthStartDay >= 28 ? 0.4 : 1 }]}
+                >
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>+</Text>
+                </Pressable>
               </View>
             </View>
 

@@ -40,6 +40,7 @@ export default function Planning() {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [monthStartDay, setMonthStartDay] = useState(1);
   const [loading, setLoading] = useState(true);
 
   // ── Recurring items ──────────────────────────────────────────────────
@@ -134,6 +135,16 @@ export default function Planning() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('profile')
+      .select('month_start_day')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data }) => setMonthStartDay(data?.month_start_day ?? 1));
+  }, [user]);
+
   // ── Recurring actions (unchanged from the old More screen) ──────────
   async function addRecurringItem() {
     if (!user || !newRecurringName.trim() || !newRecurringCategoryId || !newRecurringAccountId) return;
@@ -224,7 +235,8 @@ export default function Planning() {
     const { error } = await confirmRecurringItem(
       user.id,
       item,
-      overrideAmount && overrideAmount > 0 ? overrideAmount : undefined
+      overrideAmount && overrideAmount > 0 ? overrideAmount : undefined,
+      monthStartDay
     );
     setConfirmingDueId(null);
     if (!error) {
@@ -1223,43 +1235,43 @@ function LongTermForm(props: {
       <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 12, marginBottom: 6 }}>
         {t('more.longTermExternalPayeeHint')}
       </Text>
-      <View style={{ flexDirection: 'row', gap: 8 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         <TextInput
           value={props.ltTargetPrefix}
           onChangeText={props.setLtTargetPrefix}
           placeholder={t('more.accountPrefixPlaceholder')}
           placeholderTextColor={tokens.textMuted}
-          style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1 }]}
+          style={[styles.wrapInput, { color: tokens.text, borderColor: tokens.border, flexGrow: 1, flexBasis: 80 }]}
         />
         <TextInput
           value={props.ltTargetNumber}
           onChangeText={props.setLtTargetNumber}
           placeholder={t('more.accountNumberPlaceholder')}
           placeholderTextColor={tokens.textMuted}
-          style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 2 }]}
+          style={[styles.wrapInput, { color: tokens.text, borderColor: tokens.border, flexGrow: 2, flexBasis: 130 }]}
         />
         <TextInput
           value={props.ltTargetBankCode}
           onChangeText={props.setLtTargetBankCode}
           placeholder={t('more.bankCodePlaceholder')}
           placeholderTextColor={tokens.textMuted}
-          style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1 }]}
+          style={[styles.wrapInput, { color: tokens.text, borderColor: tokens.border, flexGrow: 1, flexBasis: 80 }]}
         />
       </View>
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
         <TextInput
           value={props.ltVariableSymbol}
           onChangeText={props.setLtVariableSymbol}
           placeholder={t('more.longTermVariableSymbolPlaceholder')}
           placeholderTextColor={tokens.textMuted}
-          style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1 }]}
+          style={[styles.wrapInput, { color: tokens.text, borderColor: tokens.border, flexGrow: 1, flexBasis: 120 }]}
         />
         <TextInput
           value={props.ltPaymentMessage}
           onChangeText={props.setLtPaymentMessage}
           placeholder={t('more.longTermMessagePlaceholder')}
           placeholderTextColor={tokens.textMuted}
-          style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 2 }]}
+          style={[styles.wrapInput, { color: tokens.text, borderColor: tokens.border, flexGrow: 2, flexBasis: 160 }]}
         />
       </View>
 
@@ -1309,6 +1321,11 @@ const styles = StyleSheet.create({
   barFill: { height: 8, borderRadius: 4 },
   smallBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
   addInput: { flex: 1, borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  // Same visual as addInput but WITHOUT flex:1 baked in — used for rows
+  // that need flexGrow/flexBasis (so fields wrap onto a new line instead
+  // of overflowing a narrow modal) rather than a straight flex split,
+  // which `flex` and `flexGrow`/`flexBasis` together would fight over.
+  wrapInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   addBtn: { paddingHorizontal: 16, paddingVertical: 11, borderRadius: 10, justifyContent: 'center' },
   newAccountCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 4 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },

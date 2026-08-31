@@ -5,6 +5,7 @@ import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
+import { budgetMonthForDate } from '@/lib/budget-month';
 import type { DebtStatus } from '@/types/database';
 
 type DebtRow = {
@@ -43,6 +44,7 @@ export default function Debts() {
   const { t } = useLanguage();
   const { user } = useAuth();
   const [debts, setDebts] = useState<DebtRow[]>([]);
+  const [monthStartDay, setMonthStartDay] = useState(1);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -76,6 +78,16 @@ export default function Debts() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('profile')
+      .select('month_start_day')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data }) => setMonthStartDay(data?.month_start_day ?? 1));
+  }, [user]);
 
   function shareLink(token: string) {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -121,7 +133,7 @@ export default function Debts() {
       .from('transactions')
       .insert({
         owner_id: user.id,
-        budget_month: `${today.slice(0, 7)}-01`,
+        budget_month: budgetMonthForDate(today, monthStartDay),
         transaction_date: today,
         type: 'DEBT_SETTLEMENT_CREDIT',
         category_id: original?.category_id ?? null,

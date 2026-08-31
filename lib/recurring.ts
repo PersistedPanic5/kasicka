@@ -1,4 +1,5 @@
 import { supabase } from '@/lib/supabase';
+import { budgetMonthForDate } from '@/lib/budget-month';
 import type { RecurringItem } from '@/types/database';
 
 /**
@@ -74,12 +75,13 @@ export function computeDueRecurringItems(
 export async function confirmRecurringItem(
   ownerId: string,
   item: RecurringItem,
-  amount?: number
+  amount?: number,
+  monthStartDay: number = 1
 ): Promise<{ error: string | null }> {
   const today = new Date().toISOString().slice(0, 10);
   const { error } = await supabase.from('transactions').insert({
     owner_id: ownerId,
-    budget_month: `${today.slice(0, 7)}-01`,
+    budget_month: budgetMonthForDate(today, monthStartDay),
     transaction_date: today,
     type: 'EXPENSE',
     category_id: item.category_id,

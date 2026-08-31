@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import { czechIBAN, buildSpdPayload } from '@/lib/czech-qr-payment';
+import { budgetMonthForDate } from '@/lib/budget-month';
 import type { Account, LongTermItem } from '@/types/database';
 
 /**
@@ -194,12 +195,13 @@ export async function confirmReserveTransfer(
   ownerId: string,
   item: LongTermItem,
   amount: number,
-  accountId: string
+  accountId: string,
+  monthStartDay: number = 1
 ): Promise<{ error: string | null }> {
   const today = new Date().toISOString().slice(0, 10);
   const { error } = await supabase.from('transactions').insert({
     owner_id: ownerId,
-    budget_month: toMonthStart(today),
+    budget_month: budgetMonthForDate(today, monthStartDay),
     transaction_date: today,
     type: 'RESERVE_TRANSFER',
     category_id: item.category_id,
@@ -216,12 +218,13 @@ export async function confirmFinalPayment(
   ownerId: string,
   item: LongTermItem,
   amount: number,
-  accountId: string
+  accountId: string,
+  monthStartDay: number = 1
 ): Promise<{ error: string | null }> {
   const today = new Date().toISOString().slice(0, 10);
   const { error } = await supabase.from('transactions').insert({
     owner_id: ownerId,
-    budget_month: toMonthStart(today),
+    budget_month: budgetMonthForDate(today, monthStartDay),
     transaction_date: today,
     type: 'PAYMENT_FROM_RESERVE',
     category_id: item.category_id,

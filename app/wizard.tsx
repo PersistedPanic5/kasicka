@@ -8,6 +8,7 @@ import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
+import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
 import {
   accrualProgress,
   confirmFinalPayment,
@@ -46,23 +47,7 @@ import type { Account, Category, LongTermItem } from '@/types/database';
  * loses anything you already confirmed.
  */
 
-const MONTH_NAMES_EN = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-const MONTH_NAMES_CS = [
-  'Leden', 'Únor', 'Březen', 'Duben', 'Květen', 'Červen',
-  'Červenec', 'Srpen', 'Září', 'Říjen', 'Listopad', 'Prosinec',
-];
-
 const STEP_COUNT = 5;
-
-function monthStart(offset: number): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() + offset);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-}
 
 interface DueEntry {
   item: LongTermItem;
@@ -83,19 +68,36 @@ export default function MonthlyWizard() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
+  const [monthStartDay, setMonthStartDay] = useState<number | null>(null);
 
-  const currentMonth = useMemo(() => monthStart(0), []);
-  const prevMonth = useMemo(() => monthStart(-1), []);
-  const monthLabel = useMemo(() => {
-    const [y, m] = currentMonth.split('-');
-    const names = language === 'cs' ? MONTH_NAMES_CS : MONTH_NAMES_EN;
-    return `${names[Number(m) - 1]} ${y}`;
-  }, [currentMonth, language]);
-  const prevMonthLabel = useMemo(() => {
-    const [y, m] = prevMonth.split('-');
-    const names = language === 'cs' ? MONTH_NAMES_CS : MONTH_NAMES_EN;
-    return `${names[Number(m) - 1]} ${y}`;
-  }, [prevMonth, language]);
+  // Fetched separately from the main load() below, and gates it — see the
+  // identical pattern (and the reasoning) in overview.tsx.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    supabase
+      .from('profile')
+      .select('month_start_day')
+      .eq('id', user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setMonthStartDay(data?.month_start_day ?? 1);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const currentMonth = useMemo(() => (monthStartDay !== null ? currentBudgetMonth(monthStartDay) : null), [monthStartDay]);
+  const prevMonth = useMemo(() => (currentMonth ? shiftBudgetMonth(currentMonth, -1) : null), [currentMonth]);
+  const monthLabel = useMemo(
+    () => (currentMonth && monthStartDay !== null ? formatBudgetMonthLabel(currentMonth, monthStartDay, language) : ''),
+    [currentMonth, monthStartDay, language]
+  );
+  const prevMonthLabel = useMemo(
+    () => (prevMonth && monthStartDay !== null ? formatBudgetMonthLabel(prevMonth, monthStartDay, language) : ''),
+    [prevMonth, monthStartDay, language]
+  );
 
   // ── Step 1 — this month's budgets (editable) ────────────────────────
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
@@ -115,7 +117,7 @@ export default function MonthlyWizard() {
   const [confirmedThisSession, setConfirmedThisSession] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
-    if (!user) return;
+    if (!user || !currentMonth || !prevMonth) return;
     setLoading(true);
     const [categoriesRes, accountsRes, profileRes, budgetsRes, prevBudgetsRes, prevTxRes, longTermRes, longTermTxRes] =
       await Promise.all([
@@ -194,7 +196,7 @@ export default function MonthlyWizard() {
   }, [load]);
 
   async function saveAllBudgets() {
-    if (!user) return;
+    if (!user || !currentMonth) return;
     setSavingBudgets(true);
     const rows = categories
       .map((cat) => {
@@ -239,7 +241,7 @@ export default function MonthlyWizard() {
     const accountId = entry.item.reserve_account_id ?? defaultAccountId;
     if (!accountId) return;
     setConfirmingId(entry.item.id);
-    const { error } = await confirmReserveTransfer(user.id, entry.item, amount, accountId);
+    const { error } = await confirmReserveTransfer(user.id, entry.item, amount, accountId, monthStartDay ?? 1);
     setConfirmingId(null);
     if (!error) {
       setConfirmedThisSession((prev) => new Set(prev).add(entry.item.id));
@@ -253,7 +255,13 @@ export default function MonthlyWizard() {
     const accountId = entry.item.reserve_account_id ?? defaultAccountId;
     if (!accountId) return;
     setConfirmingId(entry.item.id);
-    const { error } = await confirmFinalPayment(user.id, entry.item, entry.item.full_payment_amount, accountId);
+    const { error } = await confirmFinalPayment(
+      user.id,
+      entry.item,
+      entry.item.full_payment_amount,
+      accountId,
+      monthStartDay ?? 1
+    );
     setConfirmingId(null);
     if (!error) {
       setConfirmedThisSession((prev) => new Set(prev).add(entry.item.id));
