@@ -26,11 +26,19 @@ import { CATEGORY_NAMES } from '@/lib/theme';
  * default_account_id. A racing second call's insert fails with a unique/PK
  * violation (Postgres error code 23505) — that's treated as "someone else
  * already bootstrapped this user," not an error, and the call just returns.
+ *
+ * `email` (migration 0006) is denormalized from the auth session onto the
+ * profile row purely so Pavel can see who's signed up from the profile
+ * table itself — sign-in has no allow-list (lib/auth-context.tsx), so
+ * that's a real question, not a hypothetical. Backfilled on every call
+ * (cheap update) rather than only at insert time, so an existing profile
+ * row created before this column existed still gets filled in the next
+ * time that user signs in.
  */
-export async function ensureBootstrapped(userId: string): Promise<void> {
+export async function ensureBootstrapped(userId: string, email: string | null = null): Promise<void> {
   const { data: existingProfile } = await supabase
     .from('profile')
-    .select('id, default_account_id')
+    .select('id, default_account_id, email')
     .eq('id', userId)
     .maybeSingle();
 
@@ -38,13 +46,17 @@ export async function ensureBootstrapped(userId: string): Promise<void> {
     // Profile already exists. In the old race, a duplicate account/category
     // set could still have been created by a second concurrent call before
     // this fix shipped — but the profile row itself is unique per user, so
-    // once it's here there's nothing left for this call to do.
+    // once it's here there's nothing left for this call to do, beyond
+    // backfilling email if it's missing or has changed.
+    if (email && existingProfile.email !== email) {
+      await supabase.from('profile').update({ email }).eq('id', userId);
+    }
     return;
   }
 
   // Claim the mutex: try to be the one caller who creates this user's
   // profile row. default_account_id stays null until the account exists.
-  const { error: profileInsertError } = await supabase.from('profile').insert({ id: userId });
+  const { error: profileInsertError } = await supabase.from('profile').insert({ id: userId, email });
 
   if (profileInsertError) {
     // 23505 = unique_violation — another concurrent call won the race and

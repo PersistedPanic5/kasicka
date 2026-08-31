@@ -50,6 +50,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const { user } = useAuth();
   const { defaultAccountId, categories, accounts, monthStartDay, loading: dataLoading } = useAppData();
 
+  const [entryType, setEntryType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [dayOffset, setDayOffset] = useState(0);
@@ -134,14 +135,15 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) return;
 
-    if (!user || !activeAccountId || !activeCategoryId) {
+    const isExpense = entryType === 'EXPENSE';
+    if (!user || !activeAccountId || (isExpense && !activeCategoryId)) {
       setErrorMsg(t('home.settingUpAccount'));
       return;
     }
 
     const numericSplit = Number(splitAmount);
-    const splitting = splitEnabled && splitName.trim().length > 0 && numericSplit > 0;
-    if (splitEnabled && splitting && numericSplit > numericAmount) {
+    const splitting = isExpense && splitEnabled && splitName.trim().length > 0 && numericSplit > 0;
+    if (isExpense && splitEnabled && splitting && numericSplit > numericAmount) {
       setErrorMsg(t('home.splitTooBig'));
       return;
     }
@@ -161,9 +163,12 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         owner_id: user.id,
         budget_month: budgetMonth,
         transaction_date: transactionDate,
-        type: 'EXPENSE',
+        type: entryType,
         account_id: activeAccountId,
-        category_id: activeCategoryId,
+        // Income isn't categorized (no Categories UI creates INCOME-type
+        // categories yet — build-roadmap-v1.md Phase 4) — category_id is
+        // nullable on transactions for exactly this.
+        category_id: isExpense ? activeCategoryId : null,
         amount: numericAmount,
         note: note.trim() || null,
         receipt_photo_url: photoPath,
@@ -202,6 +207,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1200);
+    setEntryType('EXPENSE');
     setAmount('');
     setNote('');
     setSplitEnabled(false);
@@ -225,6 +231,29 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
   return (
     <View style={[styles.container, variant === 'desktop' && styles.containerDesktop]}>
+      <View style={[styles.typeToggle, { backgroundColor: tokens.card }]}>
+        {(['EXPENSE', 'INCOME'] as const).map((type) => {
+          const active = entryType === type;
+          return (
+            <Pressable
+              key={type}
+              onPress={() => setEntryType(type)}
+              style={[styles.typeToggleBtn, { backgroundColor: active ? tokens.accent : 'transparent' }]}
+            >
+              <Text
+                style={{
+                  color: active ? tokens.accentText : tokens.textMuted,
+                  fontFamily: fontFamily.semibold,
+                  fontSize: 13,
+                }}
+              >
+                {type === 'EXPENSE' ? t('home.entryTypeExpense') : t('home.entryTypeIncome')}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
       <View style={styles.dateRow}>
         <Pressable
           onPress={() => setDayOffset((d) => d - 1)}
@@ -264,34 +293,36 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         ))}
       </View>
 
-      <View style={styles.chipRow}>
-        {categories.length === 0 ? (
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
-            {dataLoading ? t('home.settingUpCategories') : t('home.noCategoriesYet')}
-          </Text>
-        ) : (
-          categories.map((cat) => {
-            const active = activeCategoryId === cat.id;
-            return (
-              <Pressable
-                key={cat.id}
-                onPress={() => setCategoryId(cat.id)}
-                style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card }]}
-              >
-                <Text
-                  style={{
-                    color: active ? tokens.accentText : tokens.text,
-                    fontFamily: fontFamily.semibold,
-                    fontSize: 13,
-                  }}
+      {entryType === 'EXPENSE' && (
+        <View style={styles.chipRow}>
+          {categories.length === 0 ? (
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+              {dataLoading ? t('home.settingUpCategories') : t('home.noCategoriesYet')}
+            </Text>
+          ) : (
+            categories.map((cat) => {
+              const active = activeCategoryId === cat.id;
+              return (
+                <Pressable
+                  key={cat.id}
+                  onPress={() => setCategoryId(cat.id)}
+                  style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card }]}
                 >
-                  {cat.name}
-                </Text>
-              </Pressable>
-            );
-          })
-        )}
-      </View>
+                  <Text
+                    style={{
+                      color: active ? tokens.accentText : tokens.text,
+                      fontFamily: fontFamily.semibold,
+                      fontSize: 13,
+                    }}
+                  >
+                    {cat.name}
+                  </Text>
+                </Pressable>
+              );
+            })
+          )}
+        </View>
+      )}
 
       <TextInput
         value={note}
@@ -384,13 +415,15 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         </View>
       )}
 
-      <Pressable onPress={() => setSplitEnabled((v) => !v)} style={styles.splitToggle}>
-        <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-          {splitEnabled ? t('home.splitToggleOff') : t('home.splitToggleOn')}
-        </Text>
-      </Pressable>
+      {entryType === 'EXPENSE' && (
+        <Pressable onPress={() => setSplitEnabled((v) => !v)} style={styles.splitToggle}>
+          <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+            {splitEnabled ? t('home.splitToggleOff') : t('home.splitToggleOn')}
+          </Text>
+        </Pressable>
+      )}
 
-      {splitEnabled && (
+      {entryType === 'EXPENSE' && splitEnabled && (
         <View style={[styles.splitPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
           <TextInput
             value={splitName}
@@ -462,6 +495,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 const styles = StyleSheet.create({
   container: { width: '100%', maxWidth: 390, gap: 16 },
   containerDesktop: { maxWidth: 460 },
+  typeToggle: { flexDirection: 'row', borderRadius: 12, padding: 3, alignSelf: 'center' },
+  typeToggleBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 9 },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 10, justifyContent: 'center' },
   dateShiftBtn: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   amountInput: { fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },

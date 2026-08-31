@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
+import { Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
+import { Analytics } from '@vercel/analytics/react';
 import {
   Manrope_400Regular,
   Manrope_500Medium,
@@ -61,6 +63,10 @@ export default function RootLayout() {
           </LanguageProvider>
         </AuthProvider>
       </ThemeProvider>
+      {/* Vercel Analytics — page-view counting on the deployed site
+          (kasicka.eu). Web-only: the underlying script talks to the
+          browser's DOM/beacon APIs, so it's skipped on native builds. */}
+      {Platform.OS === 'web' && <Analytics />}
     </SafeAreaProvider>
   );
 }

@@ -70,6 +70,15 @@ export default function MonthlyWizard() {
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
   const [monthStartDay, setMonthStartDay] = useState<number | null>(null);
 
+  // How many cycles ahead of "right now" this session is planning — 0 is
+  // the current, real cycle (the full 5-step review); >0 is a future cycle
+  // you're getting a head start on. Recap (step 2) and QR/bill-confirming
+  // (steps 3-4) are tied to real due dates — currentCycle()/isReserveTransferDue()
+  // etc. in lib/long-term.ts always check against *today*, not whichever
+  // cycle is being planned — so those steps genuinely don't apply yet to a
+  // future cycle and are skipped entirely; see `steps` below.
+  const [monthOffset, setMonthOffset] = useState(0);
+
   // Fetched separately from the main load() below, and gates it — see the
   // identical pattern (and the reasoning) in overview.tsx.
   useEffect(() => {
@@ -88,7 +97,10 @@ export default function MonthlyWizard() {
     };
   }, [user]);
 
-  const currentMonth = useMemo(() => (monthStartDay !== null ? currentBudgetMonth(monthStartDay) : null), [monthStartDay]);
+  const currentMonth = useMemo(
+    () => (monthStartDay !== null ? shiftBudgetMonth(currentBudgetMonth(monthStartDay), monthOffset) : null),
+    [monthStartDay, monthOffset]
+  );
   const prevMonth = useMemo(() => (currentMonth ? shiftBudgetMonth(currentMonth, -1) : null), [currentMonth]);
   const monthLabel = useMemo(
     () => (currentMonth && monthStartDay !== null ? formatBudgetMonthLabel(currentMonth, monthStartDay, language) : ''),
@@ -99,9 +111,21 @@ export default function MonthlyWizard() {
     [prevMonth, monthStartDay, language]
   );
 
+  // Planning a future cycle: only step 1 (set budgets) and step 5 (finish)
+  // apply — see the monthOffset comment above.
+  const isFuturePlan = monthOffset > 0;
+  const steps = useMemo(
+    () => (isFuturePlan ? [1, 5] : Array.from({ length: STEP_COUNT }, (_, i) => i + 1)),
+    [isFuturePlan]
+  );
+
   // ── Step 1 — this month's budgets (editable) ────────────────────────
   const [budgetDrafts, setBudgetDrafts] = useState<Record<string, string>>({});
   const [savingBudgets, setSavingBudgets] = useState(false);
+  const budgetTotal = useMemo(
+    () => Object.values(budgetDrafts).reduce((sum, v) => sum + (Number(v) || 0), 0),
+    [budgetDrafts]
+  );
 
   // ── Step 2 — last month recap (read-only) ────────────────────────────
   const [prevPlannedByCategory, setPrevPlannedByCategory] = useState<Record<string, number>>({});
@@ -195,6 +219,14 @@ export default function MonthlyWizard() {
     load();
   }, [load]);
 
+  // Switching which cycle is being planned can drop the current step out of
+  // `steps` (e.g. jumping from the real cycle's step 3 to a future cycle,
+  // which only has steps 1 and 5) — always land back on step 1 when that
+  // happens.
+  useEffect(() => {
+    setStep(1);
+  }, [monthOffset]);
+
   async function saveAllBudgets() {
     if (!user || !currentMonth) return;
     setSavingBudgets(true);
@@ -213,10 +245,12 @@ export default function MonthlyWizard() {
 
   async function goNext() {
     if (step === 1) await saveAllBudgets();
-    setStep((s) => Math.min(STEP_COUNT, s + 1));
+    const idx = steps.indexOf(step);
+    setStep(steps[Math.min(steps.length - 1, idx + 1)]);
   }
   function goBack() {
-    setStep((s) => Math.max(1, s - 1));
+    const idx = steps.indexOf(step);
+    setStep(steps[Math.max(0, idx - 1)]);
   }
 
   const accountById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
@@ -286,7 +320,7 @@ export default function MonthlyWizard() {
       </View>
 
       <View style={styles.stepper}>
-        {Array.from({ length: STEP_COUNT }, (_, i) => i + 1).map((n) => (
+        {steps.map((n) => (
           <View
             key={n}
             style={[
@@ -296,7 +330,7 @@ export default function MonthlyWizard() {
           />
         ))}
         <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginLeft: 8 }}>
-          {t('wizard.stepLabel')} {step}/{STEP_COUNT}
+          {t('wizard.stepLabel')} {steps.indexOf(step) + 1}/{steps.length}
         </Text>
       </View>
 
@@ -315,9 +349,32 @@ export default function MonthlyWizard() {
             {/* ── Step 1 — confirm budgets ─────────────────────────── */}
             {step === 1 && (
               <View>
-                <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 14 }}>
-                  {monthLabel}
-                </Text>
+                <View style={styles.monthSwitcherRow}>
+                  <View style={styles.monthSwitcher}>
+                    <Pressable
+                      onPress={() => setMonthOffset((v) => Math.max(0, v - 1))}
+                      disabled={monthOffset === 0}
+                      style={[styles.monthBtn, { backgroundColor: tokens.cardAlt, opacity: monthOffset === 0 ? 0.4 : 1 }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>−</Text>
+                    </Pressable>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, minWidth: 170, textAlign: 'center' }}>
+                      {monthLabel}
+                    </Text>
+                    <Pressable
+                      onPress={() => setMonthOffset((v) => v + 1)}
+                      style={[styles.monthBtn, { backgroundColor: tokens.cardAlt }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>+</Text>
+                    </Pressable>
+                  </View>
+                  {isFuturePlan && (
+                    <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 11.5, marginTop: 6 }}>
+                      {t('wizard.planningAhead')}
+                    </Text>
+                  )}
+                </View>
+
                 {categories.length === 0 && (
                   <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
                     {t('overview.noCategoriesYet')}
@@ -342,6 +399,17 @@ export default function MonthlyWizard() {
                     </Text>
                   </View>
                 ))}
+
+                {categories.length > 0 && (
+                  <View style={[styles.runningSumRow, { borderTopColor: tokens.border }]}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                      {t('wizard.runningTotal')}
+                    </Text>
+                    <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 16 }}>
+                      {budgetTotal} {t('common.czk')}
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
 
@@ -588,7 +656,7 @@ export default function MonthlyWizard() {
           >
             <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{t('wizard.back')}</Text>
           </Pressable>
-          {step < STEP_COUNT && (
+          {step !== steps[steps.length - 1] && (
             <Pressable
               onPress={goNext}
               disabled={savingBudgets}
@@ -622,6 +690,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   budgetInput: { width: 90, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, textAlign: 'right' },
+  monthSwitcherRow: { marginBottom: 14 },
+  monthSwitcher: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  monthBtn: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  runningSumRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    paddingTop: 12,
+    marginTop: 6,
+  },
   budgetRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   barTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
   barFill: { height: 8, borderRadius: 4 },

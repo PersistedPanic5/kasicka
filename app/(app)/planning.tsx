@@ -25,11 +25,12 @@ import type {
  * concerns — unlike Settings, which is one-time configuration.
  *
  * Long-term items are shown here read-only (the list, accrual progress
- * bars, and CRUD) — actually generating a QR payment or confirming a
- * reserve transfer / final payment happens in the guided monthly wizard
- * (app/wizard.tsx), matching screens-and-flows.md's wizard step 4. That
- * split keeps this tab a quick glance-and-manage screen and the wizard the
- * one guided place where money actually moves for long-term bills.
+ * bars, and CRUD) — this tab is about *managing the items themselves*
+ * (create/edit/archive, reserve math settings). Actually generating a QR
+ * and confirming a reserve transfer / final payment happens either in the
+ * guided monthly wizard (app/wizard.tsx step 4) or, any time outside the
+ * wizard, on the Payments tab (app/(app)/payments.tsx) — Pavel wanted the
+ * paid/unpaid overview reachable on its own, not gated behind the wizard.
  * Recurring items don't need that ceremony (no QR, no reserve math), so
  * their "due, tap to confirm" banner stays directly on this tab.
  */

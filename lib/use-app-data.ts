@@ -52,7 +52,7 @@ export function useAppData(): AppData {
 
     (async () => {
       try {
-        await ensureBootstrapped(user.id);
+        await ensureBootstrapped(user.id, user.email ?? null);
       } catch (err) {
         console.warn('[use-app-data] Bootstrap failed', err);
       }

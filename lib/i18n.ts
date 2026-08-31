@@ -49,6 +49,7 @@ const en = {
     switchToDark: 'Switch to dark mode',
     savingError: 'Something went wrong saving that.',
     shareLinkFailedPrefix: "Saved, but couldn't create the share link:",
+    quickEntry: 'Quick entry',
   },
   nav: {
     home: 'Home',
@@ -57,6 +58,7 @@ const en = {
     transactions: 'Transactions',
     more: 'More',
     planning: 'Planning',
+    payments: 'Payments',
     settings: 'Settings',
   },
   home: {
@@ -81,6 +83,8 @@ const en = {
     receiptPhotoLabel: 'Receipt photo (optional)',
     addPhoto: 'Add photo',
     photoWebOnly: 'Receipt photos are available on the web app for now.',
+    entryTypeExpense: 'Expense',
+    entryTypeIncome: 'Income',
   },
   transactions: {
     noneYet: 'No transactions yet — anything you save from Home shows up here.',
@@ -265,6 +269,17 @@ const en = {
     finishReview: 'Finish monthly review',
     reviewFinished: 'Monthly review complete',
     backToPlanning: 'Back to Planning',
+    planningAhead: 'Planning ahead — budget only. Recap and bill reminders come back once this cycle is current.',
+    runningTotal: 'Running total',
+  },
+  payments: {
+    title: 'Payments',
+    hint: 'Long-term & reserve items for the selected month — view a QR or confirm once it’s paid.',
+    noneThisMonth: 'Nothing due for this month.',
+    statusPaid: 'Paid',
+    statusUnpaid: 'Not paid',
+    viewQr: 'View QR',
+    confirmOnlyThisMonth: 'Confirming is only available for the current month.',
   },
 };
 
@@ -291,6 +306,7 @@ const cs: Dict = {
     switchToDark: 'Přepnout na tmavý režim',
     savingError: 'Při ukládání se něco pokazilo.',
     shareLinkFailedPrefix: 'Uloženo, ale odkaz ke sdílení se nepodařilo vytvořit:',
+    quickEntry: 'Rychlý zápis',
   },
   nav: {
     home: 'Domů',
@@ -299,6 +315,7 @@ const cs: Dict = {
     transactions: 'Transakce',
     more: 'Více',
     planning: 'Plánování',
+    payments: 'Platby',
     settings: 'Nastavení',
   },
   home: {
@@ -323,6 +340,8 @@ const cs: Dict = {
     receiptPhotoLabel: 'Fotka účtenky (nepovinné)',
     addPhoto: 'Přidat fotku',
     photoWebOnly: 'Fotky účtenek jsou zatím dostupné jen ve webové aplikaci.',
+    entryTypeExpense: 'Výdaj',
+    entryTypeIncome: 'Příjem',
   },
   transactions: {
     noneYet: 'Zatím žádné transakce — vše, co uložíte na Domů, se zobrazí zde.',
@@ -507,6 +526,17 @@ const cs: Dict = {
     finishReview: 'Dokončit měsíční revizi',
     reviewFinished: 'Měsíční revize dokončena',
     backToPlanning: 'Zpět na Plánování',
+    planningAhead: 'Plánování dopředu — jen rozpočet. Rekapitulace a upomínky plateb se vrátí, až bude tento cyklus aktuální.',
+    runningTotal: 'Průběžný součet',
+  },
+  payments: {
+    title: 'Platby',
+    hint: 'Dlouhodobé platby a rezervy pro vybraný měsíc — zobrazte QR nebo potvrďte, jakmile je zaplaceno.',
+    noneThisMonth: 'Tento měsíc nic není splatné.',
+    statusPaid: 'Zaplaceno',
+    statusUnpaid: 'Nezaplaceno',
+    viewQr: 'Zobrazit QR',
+    confirmOnlyThisMonth: 'Potvrzení je dostupné jen pro aktuální měsíc.',
   },
 };
 

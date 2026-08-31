@@ -1,0 +1,13 @@
+-- profile.email — build-roadmap-v1.md follow-up: since sign-in is
+-- Google OAuth with no allow-list (see lib/auth-context.tsx), anyone with a
+-- Google account can sign in and bootstrap their own isolated profile
+-- (lib/bootstrap.ts). This column lets Pavel see, from the profile table
+-- itself (Table Editor or a query), who has actually signed up — without
+-- needing to cross-reference the auth schema.
+--
+-- Note: Supabase's own dashboard already lists every signed-up user's email
+-- under Authentication → Users, with last-sign-in time — that's the
+-- fastest place to check "who's using this" today, with no code involved.
+-- This column is a convenience for seeing it alongside the rest of a
+-- user's app data (Table Editor, joins, etc).
+alter table profile add column email text;
