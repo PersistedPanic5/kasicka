@@ -227,6 +227,23 @@ export default function MonthlyWizard() {
     setStep(1);
   }, [monthOffset]);
 
+  // Fills every category's draft from prevPlannedByCategory (the same data
+  // step 2's recap shows) — falling back to default_monthly_budget for a
+  // category with no planned amount last cycle, same as the initial-load
+  // fallback above. A plain overwrite rather than "only fill blanks": it's
+  // an explicit, named action ("sync from previous"), not a background
+  // merge, so the whole point is giving a predictable, known starting
+  // point to then adjust from.
+  function syncFromPrevious() {
+    setBudgetDrafts((prev) => {
+      const next = { ...prev };
+      for (const cat of categories) {
+        next[cat.id] = String(prevPlannedByCategory[cat.id] ?? cat.default_monthly_budget ?? 0);
+      }
+      return next;
+    });
+  }
+
   async function saveAllBudgets() {
     if (!user || !currentMonth) return;
     setSavingBudgets(true);
@@ -350,22 +367,33 @@ export default function MonthlyWizard() {
             {step === 1 && (
               <View>
                 <View style={styles.monthSwitcherRow}>
-                  <View style={styles.monthSwitcher}>
+                  <View style={styles.monthSwitcherLine}>
+                    <View style={styles.monthSwitcher}>
+                      <Pressable
+                        onPress={() => setMonthOffset((v) => Math.max(0, v - 1))}
+                        disabled={monthOffset === 0}
+                        style={[styles.monthBtn, { backgroundColor: tokens.cardAlt, opacity: monthOffset === 0 ? 0.4 : 1 }]}
+                      >
+                        <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>−</Text>
+                      </Pressable>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, minWidth: 170, textAlign: 'center' }}>
+                        {monthLabel}
+                      </Text>
+                      <Pressable
+                        onPress={() => setMonthOffset((v) => v + 1)}
+                        style={[styles.monthBtn, { backgroundColor: tokens.cardAlt }]}
+                      >
+                        <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>+</Text>
+                      </Pressable>
+                    </View>
                     <Pressable
-                      onPress={() => setMonthOffset((v) => Math.max(0, v - 1))}
-                      disabled={monthOffset === 0}
-                      style={[styles.monthBtn, { backgroundColor: tokens.cardAlt, opacity: monthOffset === 0 ? 0.4 : 1 }]}
+                      onPress={syncFromPrevious}
+                      disabled={categories.length === 0}
+                      style={[styles.syncBtn, { backgroundColor: tokens.cardAlt, opacity: categories.length === 0 ? 0.4 : 1 }]}
                     >
-                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>−</Text>
-                    </Pressable>
-                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, minWidth: 170, textAlign: 'center' }}>
-                      {monthLabel}
-                    </Text>
-                    <Pressable
-                      onPress={() => setMonthOffset((v) => v + 1)}
-                      style={[styles.monthBtn, { backgroundColor: tokens.cardAlt }]}
-                    >
-                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>+</Text>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                        {t('wizard.syncFromPrevious')}
+                      </Text>
                     </Pressable>
                   </View>
                   {isFuturePlan && (
@@ -691,8 +719,10 @@ const styles = StyleSheet.create({
   },
   budgetInput: { width: 90, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 14, textAlign: 'right' },
   monthSwitcherRow: { marginBottom: 14 },
+  monthSwitcherLine: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 },
   monthSwitcher: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   monthBtn: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  syncBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
   runningSumRow: {
     flexDirection: 'row',
     alignItems: 'center',

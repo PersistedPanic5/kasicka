@@ -271,6 +271,7 @@ const en = {
     backToPlanning: 'Back to Planning',
     planningAhead: 'Planning ahead — budget only. Recap and bill reminders come back once this cycle is current.',
     runningTotal: 'Running total',
+    syncFromPrevious: 'Copy from previous month',
   },
   payments: {
     title: 'Payments',
@@ -528,6 +529,7 @@ const cs: Dict = {
     backToPlanning: 'Zpět na Plánování',
     planningAhead: 'Plánování dopředu — jen rozpočet. Rekapitulace a upomínky plateb se vrátí, až bude tento cyklus aktuální.',
     runningTotal: 'Průběžný součet',
+    syncFromPrevious: 'Zkopírovat z minulého měsíce',
   },
   payments: {
     title: 'Platby',
