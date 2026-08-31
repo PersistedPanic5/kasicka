@@ -408,25 +408,34 @@ export default function MonthlyWizard() {
                     {t('overview.noCategoriesYet')}
                   </Text>
                 )}
-                {categories.map((cat) => (
-                  <View
-                    key={cat.id}
-                    style={[styles.budgetRow, { backgroundColor: tokens.card, borderColor: tokens.border }]}
-                  >
-                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14, flex: 1 }}>
-                      {cat.name}
-                    </Text>
-                    <TextInput
-                      value={budgetDrafts[cat.id] ?? ''}
-                      onChangeText={(v) => setBudgetDrafts((prev) => ({ ...prev, [cat.id]: v }))}
-                      keyboardType="numeric"
-                      style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border }]}
-                    />
-                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
-                      {t('common.czk')}
-                    </Text>
-                  </View>
-                ))}
+                {categories.map((cat) => {
+                  const draftAmount = Number(budgetDrafts[cat.id]) || 0;
+                  const share = budgetTotal > 0 ? Math.round((draftAmount / budgetTotal) * 100) : 0;
+                  return (
+                    <View
+                      key={cat.id}
+                      style={[styles.budgetRow, { backgroundColor: tokens.card, borderColor: tokens.border }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14, flex: 1 }}>
+                        {cat.name}
+                      </Text>
+                      <TextInput
+                        value={budgetDrafts[cat.id] ?? ''}
+                        onChangeText={(v) => setBudgetDrafts((prev) => ({ ...prev, [cat.id]: v }))}
+                        keyboardType="numeric"
+                        style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border }]}
+                      />
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                        {t('common.czk')}
+                      </Text>
+                      {budgetTotal > 0 && (
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, width: 34, textAlign: 'right' }}>
+                          {share}%
+                        </Text>
+                      )}
+                    </View>
+                  );
+                })}
 
                 {categories.length > 0 && (
                   <View style={[styles.runningSumRow, { borderTopColor: tokens.border }]}>

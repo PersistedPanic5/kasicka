@@ -218,6 +218,8 @@ const en = {
     overBudget: 'over',
     setBudget: 'Set budget',
     noCategoriesYet: 'Add a category in More to start budgeting.',
+    editBudgets: 'Edit budgets',
+    ofTotal: 'of total',
   },
   signIn: {
     title: 'Sign in to continue',
@@ -476,6 +478,8 @@ const cs: Dict = {
     overBudget: 'nad rozpočtem',
     setBudget: 'Nastavit rozpočet',
     noCategoriesYet: 'Přidejte kategorii v sekci Více a začněte rozpočtovat.',
+    editBudgets: 'Upravit rozpočty',
+    ofTotal: 'z celku',
   },
   signIn: {
     title: 'Přihlaste se pro pokračování',

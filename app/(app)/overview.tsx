@@ -42,9 +42,14 @@ export default function Overview() {
   const [totalSpent, setTotalSpent] = useState(0);
   const [loading, setLoading] = useState(true);
 
-  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState('');
-  const [saving, setSaving] = useState(false);
+  // Editing budgets is an all-or-nothing "unlock" rather than tap-any-
+  // number-to-edit — a per-row implicit edit state read as a bug (tapping
+  // a total looked editable when it shouldn't have), so this is instead a
+  // deliberate Edit → adjust as many rows as you like → Save/Cancel flow,
+  // matching the wizard's step 1 batch-edit pattern.
+  const [editingAll, setEditingAll] = useState(false);
+  const [budgetDraftsAll, setBudgetDraftsAll] = useState<Record<string, string>>({});
+  const [savingAll, setSavingAll] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -128,31 +133,43 @@ export default function Overview() {
     return plannedByCategory[cat.id] ?? cat.default_monthly_budget ?? 0;
   }
 
-  function startEdit(cat: CategoryRow) {
-    setEditingCategoryId(cat.id);
-    setEditValue(String(plannedFor(cat)));
+  function startEditAll() {
+    const drafts: Record<string, string> = {};
+    for (const cat of categories) drafts[cat.id] = String(plannedFor(cat));
+    setBudgetDraftsAll(drafts);
+    setEditingAll(true);
   }
 
-  async function saveBudget(categoryId: string) {
+  function cancelEditAll() {
+    setEditingAll(false);
+    setBudgetDraftsAll({});
+  }
+
+  async function saveAllBudgetsOverview() {
     if (!user || !budgetMonth) return;
-    const amount = Number(editValue);
-    if (Number.isNaN(amount) || amount < 0) {
-      setEditingCategoryId(null);
-      return;
+    setSavingAll(true);
+    const rows = categories
+      .map((cat) => {
+        const amount = Number(budgetDraftsAll[cat.id]);
+        if (Number.isNaN(amount) || amount < 0) return null;
+        return { owner_id: user.id, budget_month: budgetMonth, category_id: cat.id, planned_amount: amount };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null);
+    if (rows.length > 0) {
+      await supabase.from('monthly_budgets').upsert(rows, { onConflict: 'owner_id,budget_month,category_id' });
+      setPlannedByCategory((prev) => {
+        const next = { ...prev };
+        for (const row of rows) next[row.category_id] = row.planned_amount;
+        return next;
+      });
     }
-    setSaving(true);
-    await supabase
-      .from('monthly_budgets')
-      .upsert(
-        { owner_id: user.id, budget_month: budgetMonth, category_id: categoryId, planned_amount: amount },
-        { onConflict: 'owner_id,budget_month,category_id' }
-      );
-    setPlannedByCategory((prev) => ({ ...prev, [categoryId]: amount }));
-    setSaving(false);
-    setEditingCategoryId(null);
+    setSavingAll(false);
+    setEditingAll(false);
+    setBudgetDraftsAll({});
   }
 
   const net = totalIncome - totalSpent;
+  const totalPlanned = useMemo(() => categories.reduce((sum, cat) => sum + plannedFor(cat), 0), [categories, plannedByCategory]);
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 60 }}>
@@ -222,26 +239,50 @@ export default function Overview() {
             </Text>
           ) : (
             <View style={{ marginTop: 28 }}>
+              <View style={styles.editRow}>
+                {!editingAll ? (
+                  <Pressable onPress={startEditAll} style={[styles.editBtn, { backgroundColor: tokens.cardAlt }]}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                      {t('overview.editBudgets')}
+                    </Text>
+                  </Pressable>
+                ) : (
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <Pressable onPress={cancelEditAll} disabled={savingAll} style={[styles.editBtn, { backgroundColor: tokens.cardAlt }]}>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                        {t('common.cancel')}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={saveAllBudgetsOverview}
+                      disabled={savingAll}
+                      style={[styles.editBtn, { backgroundColor: tokens.accent, opacity: savingAll ? 0.6 : 1 }]}
+                    >
+                      <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                        {savingAll ? t('common.saving') : t('common.save')}
+                      </Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+
               {categories.map((cat) => {
                 const planned = plannedFor(cat);
                 const actual = actualByCategory[cat.id] ?? 0;
                 const pct = planned > 0 ? Math.min(actual / planned, 1) : actual > 0 ? 1 : 0;
                 const over = planned > 0 && actual > planned;
-                const editing = editingCategoryId === cat.id;
+                const shareOfTotal = totalPlanned > 0 ? Math.round((planned / totalPlanned) * 100) : 0;
 
                 return (
                   <View key={cat.id} style={styles.budgetRow}>
                     <View style={styles.budgetRowTop}>
                       <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{cat.name}</Text>
-                      {editing ? (
+                      {editingAll ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                           <TextInput
-                            value={editValue}
-                            onChangeText={setEditValue}
+                            value={budgetDraftsAll[cat.id] ?? ''}
+                            onChangeText={(v) => setBudgetDraftsAll((prev) => ({ ...prev, [cat.id]: v }))}
                             keyboardType="numeric"
-                            autoFocus
-                            onBlur={() => saveBudget(cat.id)}
-                            onSubmitEditing={() => saveBudget(cat.id)}
                             style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border }]}
                           />
                           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
@@ -249,11 +290,15 @@ export default function Overview() {
                           </Text>
                         </View>
                       ) : (
-                        <Pressable onPress={() => startEdit(cat)} disabled={saving}>
-                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
-                            {actual} / {planned} {t('common.czk')}
-                          </Text>
-                        </Pressable>
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                          {actual} / {planned} {t('common.czk')}
+                          {totalPlanned > 0 && (
+                            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+                              {' '}
+                              · {shareOfTotal}% {t('overview.ofTotal')}
+                            </Text>
+                          )}
+                        </Text>
                       )}
                     </View>
                     <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt }]}>
@@ -289,6 +334,8 @@ const styles = StyleSheet.create({
   monthBtn: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   cardsRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
   statCard: { flex: 1, minWidth: 130, borderWidth: 1, borderRadius: 14, padding: 14 },
+  editRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 14 },
+  editBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 9 },
   budgetRow: { marginBottom: 18 },
   budgetRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
   barTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
