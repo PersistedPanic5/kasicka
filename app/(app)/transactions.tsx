@@ -1,10 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
+import type { DebtStatus } from '@/types/database';
 
 type TransactionRow = {
   id: string;
@@ -14,8 +17,42 @@ type TransactionRow = {
   note: string | null;
   status: string;
   category_id: string | null;
+  account_id: string;
+  receipt_photo_url: string | null;
   categories: { name: string } | null;
 };
+
+type DetailDebtRow = {
+  id: string;
+  owed_by_name: string;
+  amount: number;
+  status: DebtStatus;
+  share_token: string;
+};
+
+type TypeFilter = 'ALL' | 'EXPENSE' | 'INCOME' | 'OTHER';
+
+/** Small stroke-based icon badges shown inline in a row's subtitle — matches
+ * the stroke/viewBox conventions already used for the hamburger and
+ * quick-entry icons in app/(app)/_layout.tsx. */
+function PhotoIcon({ size = 13, color }: { size?: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 8h3l2-2h6l2 2h3v11H4z" />
+      <Circle cx="12" cy="13.2" r="3" />
+    </Svg>
+  );
+}
+function PeopleIcon({ size = 13, color }: { size?: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+      <Circle cx="9" cy="7" r="4" />
+      <Path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <Path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </Svg>
+  );
+}
 
 /**
  * Real transaction list — chronological, most recent first.
@@ -39,15 +76,43 @@ type TransactionRow = {
  * what you actually typed to describe it) with the category demoted to
  * the subtitle line — otherwise the category name carries the row, same
  * as before notes existed.
+ *
+ * Search/filter + detail view (Pavel's request): a search box plus two
+ * chip-filter rows (type, category), styled after Debts' filterRow/
+ * filterChip pattern rather than inventing a new filter UI. Rows moved
+ * from a flat bottom-border list to Debts' card/cardTop/cardActions
+ * layout at the same time — partly for visual consistency, partly
+ * because a flat single row was exactly the shape that caused the
+ * Czech-language column-squeeze bug on the Debts page (see that file's
+ * `card` comment); stacking actions onto their own wrapping row sidesteps
+ * it here too now that a third action button (Split) is joining Edit/
+ * Delete.
+ *
+ * Tapping a row (outside of Select mode) opens a new detail modal — the
+ * receipt photo (if any) wasn't visible ANYWHERE before this, only ever
+ * uploaded and stored; the detail view is where it's actually shown,
+ * fetched as a short-lived signed URL since the "receipts" Storage bucket
+ * is private (supabase/migrations/0004_recurring_and_push.sql). The same
+ * modal is also where "create a debt from this existing bill" lives — a
+ * small "Split" button on the row (and a toggle inside the detail modal
+ * itself) both open it, reusing the exact same fields/copy as the split
+ * panel on Home (components/ExpenseEntryForm.tsx: who owes / how much /
+ * message) so creating a debt looks and behaves identically whether it
+ * happens at the moment of entry or after the fact. Existing debts
+ * already linked to a transaction are listed read-only above that form,
+ * both so Pavel doesn't accidentally double-split a bill and because one
+ * bill can legitimately be split among more than one person over time.
  */
 export default function Transactions() {
   const { tokens } = useTheme();
-  // Aliased to `tr` — this file already uses `t` as the loop variable for
-  // each transaction row (see transactions.map((t) => ...) below).
+  // Aliased to `tr` — this file already uses `t` as the loop/row variable
+  // for each transaction (see transactions.map((t) => ...) below).
   const { t: tr } = useLanguage();
+  const { user } = useAuth();
   const { categories } = useAppData();
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [debtLinkedIds, setDebtLinkedIds] = useState<Set<string>>(new Set());
 
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -63,17 +128,50 @@ export default function Transactions() {
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
+  const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+
+  const [detail, setDetail] = useState<TransactionRow | null>(null);
+  const [detailPhotoUrl, setDetailPhotoUrl] = useState<string | null>(null);
+  const [detailPhotoLoading, setDetailPhotoLoading] = useState(false);
+  const [detailPhotoError, setDetailPhotoError] = useState<string | null>(null);
+  const [detailDebts, setDetailDebts] = useState<DetailDebtRow[]>([]);
+  const [detailDebtsLoading, setDetailDebtsLoading] = useState(false);
+
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  const [splitName, setSplitName] = useState('');
+  const [splitAmount, setSplitAmount] = useState('');
+  const [splitMessage, setSplitMessage] = useState('');
+  const [splitSaving, setSplitSaving] = useState(false);
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const [splitShareLink, setSplitShareLink] = useState<string | null>(null);
+  const [splitLinkCopied, setSplitLinkCopied] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from('transactions')
-      .select('id, transaction_date, type, amount, note, status, category_id, categories(name)')
+      .select(
+        'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
+      )
       .eq('status', 'PAID')
       .order('transaction_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(100);
-    setTransactions((data as unknown as TransactionRow[]) ?? []);
+    const rows = (data as unknown as TransactionRow[]) ?? [];
+    setTransactions(rows);
     setLoading(false);
+
+    if (rows.length > 0) {
+      const { data: debtRows } = await supabase
+        .from('debts')
+        .select('transaction_id')
+        .in('transaction_id', rows.map((r) => r.id));
+      setDebtLinkedIds(new Set((debtRows ?? []).map((d) => d.transaction_id)));
+    } else {
+      setDebtLinkedIds(new Set());
+    }
   }, []);
 
   useEffect(() => {
@@ -89,6 +187,31 @@ export default function Transactions() {
   };
 
   const isCredit = (type: string) => type === 'INCOME' || type === 'DEBT_SETTLEMENT_CREDIT';
+
+  const filteredTransactions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return transactions.filter((t) => {
+      if (typeFilter === 'EXPENSE' && t.type !== 'EXPENSE') return false;
+      if (typeFilter === 'INCOME' && t.type !== 'INCOME') return false;
+      if (typeFilter === 'OTHER' && (t.type === 'EXPENSE' || t.type === 'INCOME')) return false;
+      if (categoryFilter !== 'ALL' && t.category_id !== categoryFilter) return false;
+      if (q) {
+        const categoryName = t.categories?.name ?? typeLabel[t.type] ?? t.type;
+        const haystack = `${t.note ?? ''} ${categoryName}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [transactions, search, typeFilter, categoryFilter]);
+
+  const typeFilters: { key: TypeFilter; label: string }[] = [
+    { key: 'ALL', label: tr('transactions.filterAll') },
+    { key: 'EXPENSE', label: tr('transactions.typeExpense') },
+    { key: 'INCOME', label: tr('transactions.typeIncome') },
+    { key: 'OTHER', label: tr('transactions.filterOther') },
+  ];
+  const categoryFilters = [{ id: 'ALL', name: tr('transactions.filterAll') }, ...categories.map((c) => ({ id: c.id, name: c.name }))];
 
   function toggleSelectMode() {
     setSelectMode((v) => !v);
@@ -174,6 +297,122 @@ export default function Transactions() {
     load();
   }
 
+  function linkForToken(token: string) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      return `${window.location.origin}/d/${token}`;
+    }
+    return `/d/${token}`;
+  }
+
+  function openDetail(t: TransactionRow, opts?: { expandSplit?: boolean }) {
+    setDetail(t);
+    setSplitEnabled(Boolean(opts?.expandSplit));
+    setSplitName('');
+    setSplitAmount('');
+    setSplitMessage('');
+    setSplitError(null);
+    setSplitShareLink(null);
+    setSplitLinkCopied(false);
+    setSplitSaving(false);
+
+    setDetailPhotoUrl(null);
+    setDetailPhotoError(null);
+    if (t.receipt_photo_url) {
+      setDetailPhotoLoading(true);
+      supabase.storage
+        .from('receipts')
+        .createSignedUrl(t.receipt_photo_url, 600)
+        .then(({ data, error }) => {
+          if (error || !data) setDetailPhotoError(tr('transactions.photoLoadError'));
+          else setDetailPhotoUrl(data.signedUrl);
+          setDetailPhotoLoading(false);
+        });
+    }
+
+    setDetailDebts([]);
+    setDetailDebtsLoading(true);
+    supabase
+      .from('debts')
+      .select('id, owed_by_name, amount, status, share_token')
+      .eq('transaction_id', t.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => {
+        setDetailDebts(data ?? []);
+        setDetailDebtsLoading(false);
+      });
+  }
+
+  function closeDetail() {
+    setDetail(null);
+  }
+
+  async function saveSplitDebt() {
+    if (!detail || !user) return;
+    if (!splitName.trim()) {
+      setSplitError(tr('debts.nameError'));
+      return;
+    }
+    const numericSplit = Number(splitAmount);
+    if (!numericSplit || numericSplit <= 0) {
+      setSplitError(tr('debts.amountError'));
+      return;
+    }
+    if (numericSplit > detail.amount) {
+      setSplitError(tr('home.splitTooBig'));
+      return;
+    }
+
+    setSplitSaving(true);
+    setSplitError(null);
+    const { data: debt, error } = await supabase
+      .from('debts')
+      .insert({
+        owner_id: user.id,
+        transaction_id: detail.id,
+        owed_by_name: splitName.trim(),
+        amount: numericSplit,
+        target_account_id: detail.account_id,
+        message: splitMessage.trim() || null,
+      })
+      .select('id, owed_by_name, amount, status, share_token')
+      .single();
+
+    if (error || !debt) {
+      setSplitError(error?.message ?? tr('common.savingError'));
+      setSplitSaving(false);
+      return;
+    }
+
+    setDetailDebts((prev) => [debt as DetailDebtRow, ...prev]);
+    setDebtLinkedIds((prev) => new Set(prev).add(detail.id));
+    setSplitShareLink(linkForToken(debt.share_token));
+    setSplitName('');
+    setSplitAmount('');
+    setSplitMessage('');
+    setSplitSaving(false);
+  }
+
+  async function copySplitLink() {
+    if (!splitShareLink) return;
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+      await navigator.clipboard.writeText(splitShareLink);
+      setSplitLinkCopied(true);
+      setTimeout(() => setSplitLinkCopied(false), 1500);
+    }
+  }
+
+  function openPhotoFullSize() {
+    if (detailPhotoUrl && Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(detailPhotoUrl, '_blank', 'noopener,noreferrer');
+    }
+  }
+
+  function debtStatusLabel(status: DebtStatus) {
+    if (status === 'SETTLED') return tr('debts.settled');
+    if (status === 'CLAIMED_PAID') return tr('debts.awaitingConfirmation');
+    return tr('debts.outstanding');
+  }
+
   return (
     <View style={{ flex: 1 }}>
       <View style={styles.topBar}>
@@ -187,7 +426,57 @@ export default function Transactions() {
         </Pressable>
       </View>
 
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: selectMode ? 90 : 40 }}>
+      <View style={[styles.searchWrap, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+        <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={tokens.textMuted} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <Circle cx="11" cy="11" r="7" />
+          <Path d="m21 21-4.3-4.3" />
+        </Svg>
+        <TextInput
+          value={search}
+          onChangeText={setSearch}
+          placeholder={tr('transactions.searchPlaceholder')}
+          placeholderTextColor={tokens.textMuted}
+          style={[styles.searchInput, { color: tokens.text }]}
+        />
+      </View>
+
+      <View style={styles.filterRow}>
+        {typeFilters.map((f) => {
+          const active = typeFilter === f.key;
+          return (
+            <Pressable
+              key={f.key}
+              onPress={() => setTypeFilter(f.key)}
+              style={[styles.filterChip, { backgroundColor: active ? tokens.accent : tokens.card }]}
+            >
+              <Text style={{ color: active ? tokens.accentText : tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                {f.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {categories.length > 0 && (
+        <View style={[styles.filterRow, { marginTop: 4 }]}>
+          {categoryFilters.map((c) => {
+            const active = categoryFilter === c.id;
+            return (
+              <Pressable
+                key={c.id}
+                onPress={() => setCategoryFilter(c.id)}
+                style={[styles.filterChip, { backgroundColor: active ? tokens.accent : tokens.card }]}
+              >
+                <Text style={{ color: active ? tokens.accentText : tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                  {c.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+
+      <ScrollView style={{ flex: 1, marginTop: 14 }} contentContainerStyle={{ paddingBottom: selectMode ? 90 : 40 }}>
         {loading && (
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium }}>{tr('common.loading')}</Text>
         )}
@@ -196,70 +485,103 @@ export default function Transactions() {
             {tr('transactions.noneYet')}
           </Text>
         )}
-        {transactions.map((t) => {
+        {!loading && transactions.length > 0 && filteredTransactions.length === 0 && (
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 14 }}>
+            {tr('transactions.noMatches')}
+          </Text>
+        )}
+        {filteredTransactions.map((t) => {
           const categoryName = t.categories?.name ?? typeLabel[t.type] ?? t.type;
           const primaryName = t.note?.trim() || categoryName;
           const showCategoryAsSubtitle = Boolean(t.note?.trim()) && categoryName !== primaryName;
           const selected = selectedIds.has(t.id);
+          const isExpense = t.type === 'EXPENSE';
+          const hasPhoto = Boolean(t.receipt_photo_url);
+          const hasDebt = debtLinkedIds.has(t.id);
           return (
             <Pressable
               key={t.id}
-              onPress={() => (selectMode ? toggleSelected(t.id) : undefined)}
-              style={[styles.row, { borderBottomColor: tokens.border }]}
+              onPress={() => (selectMode ? toggleSelected(t.id) : openDetail(t))}
+              style={[styles.card, { backgroundColor: tokens.card, borderColor: tokens.border }]}
             >
-              {selectMode && (
-                <View
-                  style={[
-                    styles.checkbox,
-                    {
-                      borderColor: selected ? tokens.accent : tokens.border,
-                      backgroundColor: selected ? tokens.accent : 'transparent',
-                    },
-                  ]}
-                >
-                  {selected && <Text style={{ color: tokens.accentText, fontSize: 12, fontFamily: fontFamily.bold }}>✓</Text>}
-                </View>
-              )}
+              <View style={styles.cardTop}>
+                {selectMode && (
+                  <View
+                    style={[
+                      styles.checkbox,
+                      {
+                        borderColor: selected ? tokens.accent : tokens.border,
+                        backgroundColor: selected ? tokens.accent : 'transparent',
+                      },
+                    ]}
+                  >
+                    {selected && <Text style={{ color: tokens.accentText, fontSize: 12, fontFamily: fontFamily.bold }}>✓</Text>}
+                  </View>
+                )}
 
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14.5 }}>
-                  {primaryName}
-                </Text>
-                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, marginTop: 2 }}>
-                  {t.transaction_date}
-                  {showCategoryAsSubtitle ? ` · ${categoryName}` : ''}
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14.5 }}>
+                    {primaryName}
+                  </Text>
+                  <View style={styles.subtitleRow}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                      {t.transaction_date}
+                      {showCategoryAsSubtitle ? ` · ${categoryName}` : ''}
+                    </Text>
+                    {hasPhoto && <PhotoIcon color={tokens.textMuted} />}
+                    {hasDebt && <PeopleIcon color={tokens.textMuted} />}
+                  </View>
+                </View>
+
+                <Text
+                  style={{
+                    color: isCredit(t.type) ? tokens.greenFg : tokens.text,
+                    fontFamily: fontFamily.bold,
+                    fontSize: 15,
+                  }}
+                >
+                  {isCredit(t.type) ? '+' : '−'}
+                  {t.amount} CZK
                 </Text>
               </View>
 
-              <Text
-                style={{
-                  color: isCredit(t.type) ? tokens.greenFg : tokens.text,
-                  fontFamily: fontFamily.bold,
-                  fontSize: 15,
-                  marginRight: selectMode ? 0 : 10,
-                }}
-              >
-                {isCredit(t.type) ? '+' : '−'}
-                {t.amount} CZK
-              </Text>
-
               {!selectMode && (
-                <View style={styles.rowActions}>
-                  <Pressable onPress={() => openEdit(t)} style={[styles.rowActionBtn, { backgroundColor: tokens.card }]}>
-                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 11.5 }}>{tr('common.edit')}</Text>
-                  </Pressable>
+                <View style={styles.cardActions}>
                   <Pressable
-                    onPress={() => handleDeleteOne(t.id)}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      openEdit(t);
+                    }}
+                    style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>{tr('common.edit')}</Text>
+                  </Pressable>
+                  {isExpense && (
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        openDetail(t, { expandSplit: true });
+                      }}
+                      style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>{tr('transactions.splitBtn')}</Text>
+                    </Pressable>
+                  )}
+                  <Pressable
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleDeleteOne(t.id);
+                    }}
                     style={[
-                      styles.rowActionBtn,
-                      { backgroundColor: pendingDeleteId === t.id ? tokens.coral : tokens.card },
+                      styles.smallBtn,
+                      { backgroundColor: pendingDeleteId === t.id ? tokens.coral : tokens.cardAlt },
                     ]}
                   >
                     <Text
                       style={{
                         color: pendingDeleteId === t.id ? tokens.accentText : tokens.coral,
                         fontFamily: fontFamily.semibold,
-                        fontSize: 11.5,
+                        fontSize: 12,
                       }}
                     >
                       {pendingDeleteId === t.id ? tr('common.confirmQuestion') : tr('common.delete')}
@@ -384,6 +706,186 @@ export default function Transactions() {
           </View>
         </View>
       </Modal>
+
+      <Modal visible={detail !== null} transparent animationType="fade" onRequestClose={closeDetail}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, styles.detailCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
+            {detail && (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.detailHeader}>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16 }}>
+                    {tr('transactions.detailTitle')}
+                  </Text>
+                  <Pressable onPress={closeDetail}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13 }}>{tr('common.close')}</Text>
+                  </Pressable>
+                </View>
+
+                <Text
+                  style={{
+                    color: isCredit(detail.type) ? tokens.greenFg : tokens.text,
+                    fontFamily: fontFamily.regular,
+                    fontSize: 34,
+                    marginTop: 6,
+                  }}
+                >
+                  {isCredit(detail.type) ? '+' : '−'}
+                  {detail.amount}
+                  <Text style={{ color: tokens.textMuted, fontSize: 16, fontFamily: fontFamily.medium }}> {tr('common.czk')}</Text>
+                </Text>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13, marginTop: 4 }}>
+                  {detail.transaction_date} · {detail.categories?.name ?? typeLabel[detail.type] ?? detail.type}
+                </Text>
+                {detail.note && (
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 14, marginTop: 8 }}>
+                    {detail.note}
+                  </Text>
+                )}
+
+                {detail.receipt_photo_url && (
+                  <View style={{ marginTop: 16 }}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 6 }}>
+                      {tr('transactions.receiptPhotoLabel')}
+                    </Text>
+                    {detailPhotoLoading && (
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                        {tr('common.loading')}
+                      </Text>
+                    )}
+                    {detailPhotoError && (
+                      <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                        {detailPhotoError}
+                      </Text>
+                    )}
+                    {detailPhotoUrl && (
+                      <Pressable onPress={openPhotoFullSize}>
+                        <Image source={{ uri: detailPhotoUrl }} style={styles.detailPhoto} resizeMode="cover" />
+                        {Platform.OS === 'web' && (
+                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 5 }}>
+                            {tr('transactions.viewFullPhoto')}
+                          </Text>
+                        )}
+                      </Pressable>
+                    )}
+                  </View>
+                )}
+
+                {(detailDebtsLoading || detailDebts.length > 0) && (
+                  <View style={{ marginTop: 16 }}>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 6 }}>
+                      {tr('transactions.existingDebtsLabel')}
+                    </Text>
+                    {detailDebtsLoading ? (
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                        {tr('common.loading')}
+                      </Text>
+                    ) : (
+                      detailDebts.map((d) => (
+                        <View key={d.id} style={[styles.existingDebtRow, { borderColor: tokens.border }]}>
+                          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+                            {d.owed_by_name}
+                          </Text>
+                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                            {d.amount} {tr('common.czk')} · {debtStatusLabel(d.status)}
+                          </Text>
+                        </View>
+                      ))
+                    )}
+                  </View>
+                )}
+
+                {detail.type === 'EXPENSE' && (
+                  <>
+                    <Pressable onPress={() => setSplitEnabled((v) => !v)} style={styles.splitToggle}>
+                      <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+                        {splitEnabled ? tr('home.splitToggleOff') : tr('home.splitToggleOn')}
+                      </Text>
+                    </Pressable>
+
+                    {splitEnabled && (
+                      <View style={[styles.splitPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                        <TextInput
+                          value={splitName}
+                          onChangeText={setSplitName}
+                          placeholder={tr('home.whoOwesPlaceholder')}
+                          placeholderTextColor={tokens.textMuted}
+                          style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
+                        />
+                        <TextInput
+                          value={splitAmount}
+                          onChangeText={setSplitAmount}
+                          keyboardType="numeric"
+                          placeholder={tr('home.howMuchPlaceholder')}
+                          placeholderTextColor={tokens.textMuted}
+                          style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
+                        />
+                        <TextInput
+                          value={splitMessage}
+                          onChangeText={setSplitMessage}
+                          placeholder={tr('home.messagePlaceholder')}
+                          placeholderTextColor={tokens.textMuted}
+                          style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
+                        />
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+                          {tr('home.splitHint')}
+                        </Text>
+
+                        {splitError && (
+                          <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                            {splitError}
+                          </Text>
+                        )}
+
+                        {splitShareLink && (
+                          <View style={[styles.shareBox, { backgroundColor: tokens.greenBg }]}>
+                            <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5, marginBottom: 6 }}>
+                              {tr('home.shareLinkCreated')}
+                            </Text>
+                            <Text
+                              selectable
+                              numberOfLines={1}
+                              style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 8 }}
+                            >
+                              {splitShareLink}
+                            </Text>
+                            <Pressable onPress={copySplitLink} style={[styles.copyBtn, { backgroundColor: tokens.card }]}>
+                              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                                {splitLinkCopied ? tr('common.copied') : tr('common.copyLink')}
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )}
+
+                        <Pressable
+                          onPress={saveSplitDebt}
+                          disabled={splitSaving}
+                          style={[styles.splitSaveBtn, { backgroundColor: tokens.accent, opacity: splitSaving ? 0.6 : 1 }]}
+                        >
+                          <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                            {splitSaving ? tr('common.saving') : tr('common.save')}
+                          </Text>
+                        </Pressable>
+                      </View>
+                    )}
+                  </>
+                )}
+
+                <Pressable
+                  onPress={() => {
+                    closeDetail();
+                    openEdit(detail);
+                  }}
+                  style={[styles.modalBtn, { backgroundColor: tokens.card, marginTop: 18 }]}
+                >
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                    {tr('transactions.editTitle')}
+                  </Text>
+                </Pressable>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -395,14 +897,29 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingBottom: 10,
   },
-  row: {
+  searchWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
     gap: 8,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    marginBottom: 12,
   },
+  searchInput: { flex: 1, paddingVertical: 10, fontSize: 14 },
+  filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  filterChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 10 },
+  // Cards, not flat bordered rows — see the file doc comment on why this
+  // moved to match Debts' card/cardTop/cardActions layout.
+  card: {
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 8,
+    gap: 10,
+  },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  subtitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 },
   checkbox: {
     width: 20,
     height: 20,
@@ -410,10 +927,9 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 4,
   },
-  rowActions: { flexDirection: 'row', gap: 6 },
-  rowActionBtn: { paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8 },
+  cardActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  smallBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
   bulkBar: {
     position: 'absolute',
     left: 0,
@@ -441,9 +957,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 20,
   },
+  detailCard: { maxHeight: '85%' },
+  detailHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  detailPhoto: { width: '100%', height: 220, borderRadius: 12 },
+  existingDebtRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
   modalInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
   modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  splitToggle: { alignItems: 'center', paddingVertical: 2, marginTop: 18 },
+  splitPanel: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 8, marginTop: 8 },
+  splitInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  shareBox: { borderRadius: 14, padding: 12 },
+  copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
+  splitSaveBtn: { paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
 });
