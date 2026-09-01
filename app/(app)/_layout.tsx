@@ -137,7 +137,12 @@ export default function AppLayout() {
               const active = pathname === item.href;
               return (
                 <Link key={item.href} href={item.href} asChild>
-                  <Pressable style={[styles.menuItem, { backgroundColor: active ? tokens.accent : 'transparent' }]}>
+                  <Pressable
+                    style={StyleSheet.flatten([
+                      styles.menuItem,
+                      { backgroundColor: active ? tokens.accent : 'transparent' },
+                    ])}
+                  >
                     <Text
                       style={{
                         color: active ? tokens.accentText : tokens.text,
