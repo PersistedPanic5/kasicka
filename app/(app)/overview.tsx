@@ -117,6 +117,17 @@ export default function Overview() {
         if (row.category_id) actual[row.category_id] = (actual[row.category_id] ?? 0) + row.amount;
       } else if (row.type === 'INCOME') {
         income += row.amount;
+      } else if (row.type === 'DEBT_SETTLEMENT_CREDIT') {
+        // debts-ledger-requirements.md: settling a debt "generates a
+        // credit/refund against that same category" — a cost decrease,
+        // not income, so both the category's actual spend and the total
+        // spent figure come back down by the settled amount. Previously
+        // this branch didn't exist at all, so a settled debt's credit
+        // transaction was silently excluded from every Overview total
+        // (confirmed against a real example: -1300/-365/-34 with a +650
+        // settled credit showed -1699 instead of the correct -1049).
+        spent -= row.amount;
+        if (row.category_id) actual[row.category_id] = (actual[row.category_id] ?? 0) - row.amount;
       }
     }
     setActualByCategory(actual);

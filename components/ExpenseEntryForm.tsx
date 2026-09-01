@@ -48,7 +48,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const { tokens } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
-  const { defaultAccountId, categories, accounts, monthStartDay, loading: dataLoading } = useAppData();
+  const { defaultAccountId, categories, accounts, monthStartDay, amountButtons, loading: dataLoading } = useAppData();
 
   const [entryType, setEntryType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [amount, setAmount] = useState('');
@@ -78,7 +78,9 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const activeCategoryId = categoryId ?? categories[0]?.id ?? null;
   const activeAccountId = selectedAccountId ?? defaultAccountId;
 
-  const quickAmounts = [20, 50, 100, 200]; // TODO: profile.amount_buttons (More → Profile)
+  // profile.amount_buttons, editable in Settings → Quick amounts — falls
+  // back to the schema default if it's ever empty (e.g. mid-edit there).
+  const quickAmounts = amountButtons.length > 0 ? amountButtons : [20, 50, 100, 200];
 
   const dateLabel = useMemo(() => {
     if (dayOffset === 0) return t('common.today');
