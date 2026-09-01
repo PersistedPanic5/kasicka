@@ -5,6 +5,7 @@ import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LogoMark } from '@/components/Logo';
 import { ExpenseEntryForm } from '@/components/ExpenseEntryForm';
 import { useLanguage } from '@/lib/language-context';
 
@@ -20,9 +21,12 @@ export default function MobileFastEntry() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
       <View style={styles.header}>
-        <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 12, letterSpacing: 1 }}>
-          KASIČKA
-        </Text>
+        <View style={styles.brand}>
+          <LogoMark size={16} color={tokens.accent} holeColor={tokens.bg} />
+          <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 12, letterSpacing: 1 }}>
+            KASIČKA
+          </Text>
+        </View>
         <View style={styles.headerIcons}>
           <Link href="/(app)/home" asChild>
             <Pressable
@@ -50,6 +54,7 @@ export default function MobileFastEntry() {
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 24, paddingTop: 22 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIcons: { flexDirection: 'row', gap: 8 },
   iconBtn: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   formWrap: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 20 },

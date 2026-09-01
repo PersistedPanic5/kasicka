@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
+import { LogoMark } from '@/components/Logo';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 
@@ -18,6 +19,9 @@ export default function SignIn() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
       <View style={styles.content}>
+        <View style={{ marginBottom: 14 }}>
+          <LogoMark size={56} color={tokens.accent} holeColor={tokens.bg} />
+        </View>
         <Text
           style={{
             color: tokens.accent,

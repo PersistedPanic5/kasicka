@@ -5,6 +5,7 @@ import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LogoMark } from '@/components/Logo';
 import { useLanguage } from '@/lib/language-context';
 
 const NAV_ITEMS = [
@@ -78,9 +79,12 @@ export default function AppLayout() {
             </Pressable>
           )}
 
-          <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 14, letterSpacing: 1 }}>
-            KASIČKA
-          </Text>
+          <View style={styles.brand}>
+            <LogoMark size={18} color={tokens.accent} holeColor={tokens.bg} />
+            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 14, letterSpacing: 1 }}>
+              KASIČKA
+            </Text>
+          </View>
 
           {!narrow && (
             <ScrollView
@@ -177,6 +181,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   navLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, minWidth: 0 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   navLinksScroll: { flexShrink: 1 },
   navLinks: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   navLink: {

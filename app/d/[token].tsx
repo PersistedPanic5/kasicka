@@ -6,6 +6,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { LogoMark } from '@/components/Logo';
 import { supabase } from '@/lib/supabase';
 import { buildSpdPayload, czechIBAN } from '@/lib/czech-qr-payment';
 import { translations, detectBrowserLanguage, type Language } from '@/lib/i18n';
@@ -220,9 +221,12 @@ export default function DebtorSharePage() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
       <View style={styles.header}>
-        <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 11, letterSpacing: 1 }}>
-          KASIČKA
-        </Text>
+        <View style={styles.brand}>
+          <LogoMark size={15} color={tokens.accent} holeColor={tokens.bg} />
+          <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 11, letterSpacing: 1 }}>
+            KASIČKA
+          </Text>
+        </View>
         <View style={styles.headerRight}>
           <View style={[styles.langSwitch, { borderColor: tokens.border }]}>
             {(['en', 'cs'] as Language[]).map((lang) => (
@@ -397,6 +401,7 @@ export default function DebtorSharePage() {
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 22, paddingTop: 14, paddingBottom: 14 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   langSwitch: { flexDirection: 'row', borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
   langBtn: { paddingHorizontal: 9, paddingVertical: 6 },

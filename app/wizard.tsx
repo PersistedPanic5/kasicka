@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
+import { LogoMark } from '@/components/Logo';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
@@ -324,9 +325,12 @@ export default function MonthlyWizard() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
       <View style={styles.header}>
-        <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 13, letterSpacing: 1 }}>
-          KASIČKA
-        </Text>
+        <View style={styles.brand}>
+          <LogoMark size={16} color={tokens.accent} holeColor={tokens.bg} />
+          <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 13, letterSpacing: 1 }}>
+            KASIČKA
+          </Text>
+        </View>
         <Link href="/(app)/planning" asChild>
           <Pressable>
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13 }}>
@@ -713,6 +717,7 @@ export default function MonthlyWizard() {
 const styles = StyleSheet.create({
   screen: { flex: 1, paddingHorizontal: 28, paddingTop: 18 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 },
+  brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   stepper: { flexDirection: 'row', alignItems: 'center', marginBottom: 20 },
   stepDot: { width: 30, height: 6, borderRadius: 3, borderWidth: 1, marginRight: 6 },
   body: { paddingBottom: 40, maxWidth: 620, width: '100%', alignSelf: 'center' },
