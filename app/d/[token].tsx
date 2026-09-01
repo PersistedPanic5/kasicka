@@ -220,7 +220,7 @@ export default function DebtorSharePage() {
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
       <View style={styles.header}>
-        <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 12, letterSpacing: 1 }}>
+        <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 11, letterSpacing: 1 }}>
           KASIČKA
         </Text>
         <View style={styles.headerRight}>
@@ -261,31 +261,31 @@ export default function DebtorSharePage() {
       {!loading && debt && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body}>
           <View style={[styles.avatar, { backgroundColor: tokens.cardAlt }]}>
-            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 19 }}>P</Text>
+            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 15 }}>P</Text>
           </View>
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 15, marginBottom: 6 }}>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13, marginBottom: 3 }}>
             {'Pavel '}
             {t('debtShare.owesFor')}
           </Text>
-          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 17, marginBottom: 18 }}>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 8 }}>
             {debt.description}
           </Text>
-          <Text style={{ color: tokens.text, fontFamily: fontFamily.regular, fontSize: 48 }}>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.regular, fontSize: 34, lineHeight: 38 }}>
             {debt.amount}
-            <Text style={{ color: tokens.textMuted, fontSize: 20, fontFamily: fontFamily.medium }}> {t('common.czk')}</Text>
+            <Text style={{ color: tokens.textMuted, fontSize: 15, fontFamily: fontFamily.medium }}> {t('common.czk')}</Text>
           </Text>
 
           {debt.status === 'OUTSTANDING' && qrPayload && (
             <View style={[styles.qrBox, { backgroundColor: tokens.cardAlt, borderColor: tokens.border }]}>
               <View style={styles.qrWhite}>
-                <QRCode value={qrPayload} size={168} getRef={(ref) => (qrRef.current = ref as any)} />
+                <QRCode value={qrPayload} size={118} getRef={(ref) => (qrRef.current = ref as any)} />
               </View>
               <Text
                 style={{
                   color: tokens.textMuted,
                   fontFamily: fontFamily.medium,
-                  fontSize: 12,
-                  marginTop: 10,
+                  fontSize: 11,
+                  marginTop: 6,
                   textAlign: 'center',
                 }}
               >
@@ -298,7 +298,7 @@ export default function DebtorSharePage() {
                     onPress={handleSaveOrShareQR}
                     style={[styles.qrActionBtn, { backgroundColor: tokens.bg, borderColor: tokens.border }]}
                   >
-                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                       {qrActionState === 'shared'
                         ? t('debtShare.sharedCheck')
                         : qrActionState === 'saved'
@@ -310,8 +310,8 @@ export default function DebtorSharePage() {
                     style={{
                       color: tokens.textMuted,
                       fontFamily: fontFamily.regular,
-                      fontSize: 11,
-                      marginTop: 8,
+                      fontSize: 10,
+                      marginTop: 4,
                       textAlign: 'center',
                       opacity: 0.8,
                     }}
@@ -323,7 +323,7 @@ export default function DebtorSharePage() {
 
               {accountText && (
                 <View style={[styles.acctBox, { borderTopColor: tokens.border }]}>
-                  <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11 }}>
+                  <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 10.5 }}>
                     {t('debtShare.orEnterManually')}
                   </Text>
                   <Pressable onPress={() => copyAccountNumber(accountText)}>
@@ -332,8 +332,8 @@ export default function DebtorSharePage() {
                       style={{
                         color: tokens.text,
                         fontFamily: fontFamily.bold,
-                        fontSize: 15,
-                        marginTop: 4,
+                        fontSize: 14,
+                        marginTop: 3,
                         letterSpacing: 0.3,
                       }}
                     >
@@ -344,8 +344,8 @@ export default function DebtorSharePage() {
                     style={{
                       color: tokens.accent,
                       fontFamily: fontFamily.medium,
-                      fontSize: 11,
-                      marginTop: 4,
+                      fontSize: 10.5,
+                      marginTop: 3,
                     }}
                   >
                     {acctCopied ? t('debtShare.copiedCheck') : t('debtShare.tapToCopy')}
@@ -355,11 +355,11 @@ export default function DebtorSharePage() {
             </View>
           )}
 
-          <View style={{ flex: 1 }} />
+          <View style={{ flex: 1, minHeight: 10 }} />
 
           {debt.status === 'OUTSTANDING' && (
             <Pressable onPress={markPaid} style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
-              <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 16 }}>
+              <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
                 {t('debtShare.iPaidThis')}
               </Text>
             </Pressable>
@@ -367,14 +367,14 @@ export default function DebtorSharePage() {
 
           {debt.status === 'CLAIMED_PAID' && (
             <View style={[styles.claimedBox, { backgroundColor: tokens.greenBg }]}>
-              <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 14, marginBottom: 4 }}>
+              <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 13, marginBottom: 3 }}>
                 {t('debtShare.markedAsPaid')}
               </Text>
-              <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12.5, opacity: 0.85 }}>
+              <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11.5, opacity: 0.85 }}>
                 {t('debtShare.willConfirm')}
               </Text>
               <Pressable onPress={undo}>
-                <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 8, textDecorationLine: 'underline', opacity: 0.7 }}>
+                <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 6, textDecorationLine: 'underline', opacity: 0.7 }}>
                   {t('debtShare.undo')}
                 </Text>
               </Pressable>
@@ -395,34 +395,43 @@ export default function DebtorSharePage() {
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, paddingHorizontal: 24, paddingTop: 22, paddingBottom: 22 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
+  screen: { flex: 1, paddingHorizontal: 22, paddingTop: 14, paddingBottom: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   langSwitch: { flexDirection: 'row', borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
   langBtn: { paddingHorizontal: 9, paddingVertical: 6 },
   // Used as a ScrollView's contentContainerStyle — flexGrow (not flex) so
   // short content still fills the viewport height (letting the flex:1
-  // spacer below push the primary button to the bottom, as before), while
-  // content taller than the viewport scrolls instead of clipping off the
-  // bottom. That clipped-off-bottom, unscrollable state — reported from
-  // both an iPhone and an Android phone, in Messenger's in-app browser and
-  // plain Safari — is exactly what plain `flex: 1` couldn't handle.
-  body: { flexGrow: 1, alignItems: 'center', paddingBottom: 24 },
-  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
-  primaryBtn: { width: '100%', paddingVertical: 17, borderRadius: 16, alignItems: 'center' },
-  claimedBox: { width: '100%', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
-  qrBox: { alignItems: 'center', padding: 18, borderRadius: 18, borderWidth: 1, marginTop: 22, width: '100%' },
-  qrWhite: { backgroundColor: '#ffffff', padding: 12, borderRadius: 10 },
+  // spacer below push the primary button to the bottom), while content
+  // taller than the viewport scrolls instead of clipping off the bottom.
+  //
+  // Every element on this screen was deliberately sized/spaced down (see
+  // each inline style above) so the WHOLE page — avatar through the "I
+  // paid this" button — fits inside a single small-phone viewport without
+  // scrolling in the common case; that's the actual fix for "the user
+  // won't know to scroll". This ScrollView wrapper stays only as a safety
+  // net for cases tight sizing can't guarantee: a very long debt
+  // description wrapping to extra lines, a very short/landscape or
+  // heavily-zoomed viewport, larger system font sizes, etc. Removing it
+  // (going back to a plain `flex: 1` View) would silently clip those edge
+  // cases off-screen with no way to reach them — the exact bug this
+  // replaced — so it's kept even though it should rarely if ever trigger.
+  body: { flexGrow: 1, alignItems: 'center', paddingBottom: 12 },
+  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  primaryBtn: { width: '100%', paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
+  claimedBox: { width: '100%', paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
+  qrBox: { alignItems: 'center', padding: 12, borderRadius: 16, borderWidth: 1, marginTop: 10, width: '100%' },
+  qrWhite: { backgroundColor: '#ffffff', padding: 8, borderRadius: 10 },
   qrActionBtn: {
-    marginTop: 14,
-    paddingVertical: 9,
-    paddingHorizontal: 18,
+    marginTop: 8,
+    paddingVertical: 7,
+    paddingHorizontal: 16,
     borderRadius: 10,
     borderWidth: 1,
   },
   acctBox: {
-    marginTop: 16,
-    paddingTop: 14,
+    marginTop: 10,
+    paddingTop: 8,
     borderTopWidth: 1,
     width: '100%',
     alignItems: 'center',

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f8f7f2"/>
+
+  <g transform="translate(80,145) scale(0.30)">
+    <g fill="#32604d">
+      <path d="M 248 578 C 200 566, 198 612, 246 604" fill="none" stroke="#32604d" stroke-width="24" stroke-linecap="round"/>
+      <path d="M 335 410 C 328 362, 386 350, 415 385 C 390 383, 358 392, 342 420 Z"/>
+      <rect x="245" y="410" width="560" height="380" rx="190"/>
+      <rect x="330" y="740" width="60" height="90" rx="26"/>
+      <rect x="470" y="740" width="60" height="90" rx="26"/>
+      <rect x="610" y="740" width="60" height="90" rx="26"/>
+      <rect x="705" y="740" width="60" height="90" rx="26"/>
+      <circle cx="800" cy="600" r="95"/>
+      <rect x="470" y="380" width="140" height="34" rx="17"/>
+    </g>
+    <circle cx="775" cy="600" r="9" fill="#f8f7f2"/>
+    <circle cx="825" cy="600" r="9" fill="#f8f7f2"/>
+    <circle cx="700" cy="520" r="14" fill="#f8f7f2"/>
+  </g>
+
+  <text x="430" y="320" font-family="Manrope ExtraBold" font-weight="800" font-size="96" letter-spacing="2" fill="#32604d">KASIČKA</text>
+  <text x="433" y="378" font-family="Manrope SemiBold" font-weight="600" font-size="28" fill="#767165">Personal finance &amp; debts, kept simple.</text>
+</svg>

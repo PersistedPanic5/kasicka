@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#f8f7f2"/>
+  <g fill="#32604d">
+    <!-- tail: a simple curl fully clear of the body's left edge (x=245) -->
+    <path d="M 248 578 C 200 566, 198 612, 246 604" fill="none" stroke="#32604d" stroke-width="24" stroke-linecap="round"/>
+    <!-- ear -->
+    <path d="M 335 410 C 328 362, 386 350, 415 385 C 390 383, 358 392, 342 420 Z"/>
+    <!-- body -->
+    <rect x="245" y="410" width="560" height="380" rx="190"/>
+    <!-- legs -->
+    <rect x="330" y="740" width="60" height="90" rx="26"/>
+    <rect x="470" y="740" width="60" height="90" rx="26"/>
+    <rect x="610" y="740" width="60" height="90" rx="26"/>
+    <rect x="705" y="740" width="60" height="90" rx="26"/>
+    <!-- snout -->
+    <circle cx="800" cy="600" r="95"/>
+    <!-- coin slot -->
+    <rect x="470" y="380" width="140" height="34" rx="17"/>
+  </g>
+  <!-- nostrils -->
+  <circle cx="775" cy="600" r="9" fill="#f8f7f2"/>
+  <circle cx="825" cy="600" r="9" fill="#f8f7f2"/>
+  <!-- eye -->
+  <circle cx="700" cy="520" r="14" fill="#f8f7f2"/>
+</svg>

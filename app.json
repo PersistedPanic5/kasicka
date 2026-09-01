@@ -19,7 +19,7 @@
     "android": {
       "package": "eu.kasicka.app",
       "adaptiveIcon": {
-        "backgroundColor": "#F5F3EC",
+        "backgroundColor": "#f8f7f2",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -32,8 +32,8 @@
       "output": "static",
       "name": "Kasička",
       "shortName": "Kasička",
-      "themeColor": "#F5F3EC",
-      "backgroundColor": "#F5F3EC",
+      "themeColor": "#f8f7f2",
+      "backgroundColor": "#f8f7f2",
       "display": "standalone"
     }
   }
