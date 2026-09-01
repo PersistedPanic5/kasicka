@@ -273,25 +273,27 @@ export default function Debts() {
         onPress={() => (selectMode ? toggleSelected(debt.id) : undefined)}
         style={[styles.card, { backgroundColor: tokens.card, borderColor: tokens.border }]}
       >
-        {selectMode && (
-          <View
-            style={[
-              styles.checkbox,
-              {
-                borderColor: selected ? tokens.accent : tokens.border,
-                backgroundColor: selected ? tokens.accent : 'transparent',
-              },
-            ]}
-          >
-            {selected && <Text style={{ color: tokens.accentText, fontSize: 12, fontFamily: fontFamily.bold }}>✓</Text>}
-          </View>
-        )}
+        <View style={styles.cardTop}>
+          {selectMode && (
+            <View
+              style={[
+                styles.checkbox,
+                {
+                  borderColor: selected ? tokens.accent : tokens.border,
+                  backgroundColor: selected ? tokens.accent : 'transparent',
+                },
+              ]}
+            >
+              {selected && <Text style={{ color: tokens.accentText, fontSize: 12, fontFamily: fontFamily.bold }}>✓</Text>}
+            </View>
+          )}
 
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15 }}>{debt.owed_by_name}</Text>
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, marginTop: 2 }}>
-            {debt.amount} CZK
-          </Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15 }}>{debt.owed_by_name}</Text>
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, marginTop: 2 }}>
+              {debt.amount} CZK
+            </Text>
+          </View>
         </View>
 
         {!selectMode && (
@@ -537,16 +539,23 @@ const styles = StyleSheet.create({
   section: { marginBottom: 28 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
   filterChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 10 },
+  // A card used to be one row (name+amount, then action buttons trailing
+  // to the right) — with `justifyContent: 'space-between'` and no wrap,
+  // the buttons row never actually shrank (React Native's default
+  // flexShrink is 0, unlike web CSS), so a longer label set — Czech's
+  // "Kopírovat odkaz" / "Potvrdit vyrovnání" run noticeably longer than
+  // English — could claim more width than the card had, squeezing the
+  // name down to nothing. Stacking the actions onto their own row below
+  // (still wrapping if it ever needs to) sidesteps that regardless of
+  // language or button count, rather than patching widths per language.
   card: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     borderWidth: 1,
     borderRadius: 14,
     padding: 14,
     marginBottom: 8,
-    gap: 8,
+    gap: 10,
   },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   checkbox: {
     width: 20,
     height: 20,
@@ -555,7 +564,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  cardActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' },
+  cardActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
   smallBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
   bulkBar: {
     position: 'absolute',

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/lib/theme-context';
@@ -28,8 +28,24 @@ import { translations, detectBrowserLanguage, type Language } from '@/lib/i18n';
  * "Save / share QR" button below uses react-native-svg's web-only
  * `toDataURL()` to rasterize the on-screen QR to a PNG, then prefers the Web
  * Share API (`navigator.share({files})`) so a banking app that registers as
- * an image-share target can receive it directly, falling back to a forced
- * download when Web Share (or file sharing specifically) isn't supported.
+ * an image-share target can receive it directly.
+ *
+ * When Web Share isn't available (or fails/is cancelled), the fallback is
+ * opening the PNG on its own page in a new tab — NOT a programmatic
+ * `<a download>` click. That used to be the fallback, but a real debtor
+ * testing this from Facebook Messenger's in-app browser on Android hit
+ * exactly the failure mode that makes `<a download>` a bad fallback: the
+ * button reported "saved" (the click ran with no error) but nothing
+ * actually happened, because that in-app WebView silently no-ops
+ * programmatic downloads. A plain `<img>` on its own page is about as
+ * close to a browser-independent guarantee as this gets — press-and-hold
+ * (or right-click) to save is supported basically everywhere, including
+ * the restrictive in-app browsers where `navigator.share` and downloads
+ * are both liable to silently do nothing. The new tab is opened
+ * synchronously inside the click handler (before the async QR→PNG
+ * conversion) specifically so popup blockers still recognize it as
+ * user-gesture-triggered; if a popup blocker gets it anyway, this falls
+ * back once more to navigating the current tab straight to the image.
  * Native (iOS/Android) doesn't have this SVG method, so the button only
  * renders on web — matching this app's PWA-first distribution.
  *
@@ -127,8 +143,14 @@ export default function DebtorSharePage() {
   function handleSaveOrShareQR() {
     if (Platform.OS !== 'web' || !qrRef.current?.toDataURL) return;
 
+    // Opened synchronously, still inside the click handler — see the doc
+    // comment above. Filling it in happens later, once the async
+    // SVG→PNG conversion finishes below.
+    const fallbackWindow = window.open('', '_blank');
+
     qrRef.current.toDataURL(async (base64: string) => {
       const nav = typeof navigator !== 'undefined' ? (navigator as any) : null;
+      const dataUrl = `data:image/png;base64,${base64}`;
 
       try {
         const byteChars = atob(base64);
@@ -138,6 +160,7 @@ export default function DebtorSharePage() {
         const file = new File([byteArray], 'kasicka-payment-qr.png', { type: 'image/png' });
 
         if (nav?.canShare?.({ files: [file] })) {
+          fallbackWindow?.close();
           await nav.share({
             files: [file],
             title: t('debtShare.shareTitle'),
@@ -149,15 +172,22 @@ export default function DebtorSharePage() {
         }
       } catch {
         // AbortError (user cancelled the share sheet) or anything else —
-        // fall through to a plain download so the user still gets the image.
+        // fall through to the guaranteed-to-work path below.
       }
 
-      const link = document.createElement('a');
-      link.href = `data:image/png;base64,${base64}`;
-      link.download = 'kasicka-payment-qr.png';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      if (fallbackWindow) {
+        fallbackWindow.document.write(
+          `<!doctype html><title>${t('debtShare.shareTitle')}</title>` +
+            '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#111;">' +
+            `<img src="${dataUrl}" alt="QR" style="max-width:92vw;max-height:92vh;height:auto;border-radius:12px;" />` +
+            '</body>'
+        );
+        fallbackWindow.document.close();
+      } else {
+        // Popup blocked — last resort, navigate this tab straight to the
+        // image. The user can still save it from there; Back returns here.
+        window.location.href = dataUrl;
+      }
       setQrActionState('saved');
       setTimeout(() => setQrActionState('idle'), 2000);
     });
@@ -229,7 +259,7 @@ export default function DebtorSharePage() {
       )}
 
       {!loading && debt && (
-        <View style={styles.body}>
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body}>
           <View style={[styles.avatar, { backgroundColor: tokens.cardAlt }]}>
             <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 19 }}>P</Text>
           </View>
@@ -358,7 +388,7 @@ export default function DebtorSharePage() {
               </Text>
             </View>
           )}
-        </View>
+        </ScrollView>
       )}
     </SafeAreaView>
   );
@@ -370,7 +400,14 @@ const styles = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   langSwitch: { flexDirection: 'row', borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
   langBtn: { paddingHorizontal: 9, paddingVertical: 6 },
-  body: { flex: 1, alignItems: 'center' },
+  // Used as a ScrollView's contentContainerStyle — flexGrow (not flex) so
+  // short content still fills the viewport height (letting the flex:1
+  // spacer below push the primary button to the bottom, as before), while
+  // content taller than the viewport scrolls instead of clipping off the
+  // bottom. That clipped-off-bottom, unscrollable state — reported from
+  // both an iPhone and an Android phone, in Messenger's in-app browser and
+  // plain Safari — is exactly what plain `flex: 1` couldn't handle.
+  body: { flexGrow: 1, alignItems: 'center', paddingBottom: 24 },
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
   primaryBtn: { width: '100%', paddingVertical: 17, borderRadius: 16, alignItems: 'center' },
   claimedBox: { width: '100%', paddingVertical: 16, borderRadius: 16, alignItems: 'center' },

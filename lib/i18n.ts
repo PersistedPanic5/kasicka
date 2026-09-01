@@ -50,6 +50,7 @@ const en = {
     savingError: 'Something went wrong saving that.',
     shareLinkFailedPrefix: "Saved, but couldn't create the share link:",
     quickEntry: 'Quick entry',
+    menu: 'Menu',
   },
   nav: {
     home: 'Home',
@@ -310,6 +311,7 @@ const cs: Dict = {
     savingError: 'Při ukládání se něco pokazilo.',
     shareLinkFailedPrefix: 'Uloženo, ale odkaz ke sdílení se nepodařilo vytvořit:',
     quickEntry: 'Rychlý zápis',
+    menu: 'Menu',
   },
   nav: {
     home: 'Domů',
