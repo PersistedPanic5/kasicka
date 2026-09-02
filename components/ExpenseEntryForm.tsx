@@ -290,7 +290,9 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             onPress={() => setAmount((prev) => String((Number(prev) || 0) + v))}
             style={[styles.chip, { backgroundColor: tokens.card }]}
           >
-            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>+{v}</Text>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+              {v >= 0 ? `+${v}` : `−${Math.abs(v)}`}
+            </Text>
           </Pressable>
         ))}
       </View>

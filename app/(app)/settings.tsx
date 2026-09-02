@@ -12,6 +12,14 @@ import type { Account, AccountType, Category } from '@/types/database';
 
 const DEFAULT_AMOUNT_BUTTONS = [20, 50, 100, 200];
 
+/** Quick-amount chips are shown with an explicit sign — "+20" for a
+ * shortcut that adds to the amount, "−50" for one that lowers it — since a
+ * bare "+" prefix on every value would otherwise render a negative
+ * shortcut as the confusing "+-50". */
+function formatAmountButton(value: number): string {
+  return value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
+}
+
 function ChevronIcon({ expanded, color }: { expanded: boolean; color: string }) {
   return (
     <View style={{ transform: [{ rotate: expanded ? '180deg' : '0deg' }] }}>
@@ -280,8 +288,13 @@ export default function Settings() {
   }
 
   function addAmountButton() {
-    const value = Number(newAmount);
-    if (!value || value <= 0 || amountButtons.includes(value)) {
+    const trimmed = newAmount.trim();
+    const value = Number(trimmed);
+    // Negative shortcuts are allowed (Pavel: "sometimes we might need to
+    // lower the amount") — only zero, blank/NaN input, and duplicates are
+    // rejected. Display of negative chips is handled by formatAmountButton
+    // below, since a bare "+" prefix would otherwise read as "+-50".
+    if (!trimmed || Number.isNaN(value) || value === 0 || amountButtons.includes(value)) {
       setNewAmount('');
       return;
     }
@@ -591,7 +604,9 @@ export default function Settings() {
             <View style={styles.chipRow}>
               {amountButtons.map((value) => (
                 <View key={value} style={[styles.amountChip, { backgroundColor: tokens.cardAlt }]}>
-                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>+{value}</Text>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+                    {formatAmountButton(value)}
+                  </Text>
                   <Pressable
                     onPress={() => removeAmountButton(value)}
                     disabled={savingAmountButtons || amountButtons.length <= 1}
@@ -616,7 +631,13 @@ export default function Settings() {
               <TextInput
                 value={newAmount}
                 onChangeText={setNewAmount}
-                keyboardType="numeric"
+                // Plain "numeric"/"decimal-pad" keyboards hide the minus
+                // sign on iOS and most Android keyboards, which would make
+                // negative shortcuts untypeable there — "default" trades
+                // away the numeric-only keypad (Pavel's primary use is
+                // desktop web anyway) so "-50" can always be typed;
+                // addAmountButton() still validates/parses the result.
+                keyboardType="default"
                 placeholder={t('more.addAmountPlaceholder')}
                 placeholderTextColor={tokens.textMuted}
                 style={[styles.addInput, { color: tokens.text, borderColor: tokens.border }]}
