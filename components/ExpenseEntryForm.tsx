@@ -415,17 +415,20 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
           keyboardType="numeric"
           placeholder="0"
           placeholderTextColor={tokens.textMuted}
-          style={[styles.amountInput, { color: tokens.text }]}
+          style={[styles.amountInput, { color: tokens.text, minWidth: Math.max(60, amount.length * 30) }]}
         />
         {/* Tap cycles CZK → each active currency → back to CZK (Pavel's
             answer: CZK is part of the cycle, one control does everything).
-            Only shown once there's something to cycle through. */}
+            Styled as a continuation of the number ("1000 CZK") rather than
+            a separate button — no border/background chrome, just text
+            sitting right after the digits, with a small ▾ as the only hint
+            that it's tappable. Only shown once there's something to cycle
+            through. */}
         {activeCurrencies.length > 0 && (
-          <Pressable
-            onPress={cycleCurrency}
-            style={[styles.currencyBadge, { backgroundColor: tokens.card, borderColor: tokens.border }]}
-          >
-            <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>{currency}</Text>
+          <Pressable onPress={cycleCurrency} hitSlop={10} style={styles.currencySuffix}>
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 20 }}>
+              {currency} <Text style={{ fontSize: 13 }}>▾</Text>
+            </Text>
           </Pressable>
         )}
       </View>
@@ -718,9 +721,9 @@ const styles = StyleSheet.create({
   typeToggleBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 9 },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 10, justifyContent: 'center' },
   dateShiftBtn: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  amountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
-  amountInput: { flex: 1, fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
-  currencyBadge: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  amountRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 2 },
+  amountInput: { fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
+  currencySuffix: { paddingHorizontal: 4, paddingBottom: 12 },
   czkEquivalent: { textAlign: 'center', fontSize: 13, fontFamily: fontFamily.medium, marginTop: -8 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 },

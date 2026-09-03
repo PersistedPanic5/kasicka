@@ -68,12 +68,17 @@ function parseDailyTxt(text: string): ParsedFile | null {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   if (lines.length < 2) return null;
 
-  const dateMatch = lines[0].match(/^(\d{2})\.(\w{3})\.(\d{4})/);
+  // Real header, confirmed from a live response: "13 Aug 2026 #155" — a
+  // space-separated "D Mon YYYY  #N" with NO leading zero on single-digit
+  // days (e.g. today would be "3 Sep 2026 #172"), not the dotted
+  // "DD.Mon.YYYY" this was originally (and wrongly) written against before
+  // ever seeing a real response.
+  const dateMatch = lines[0].match(/^(\d{1,2})\s+(\w{3})\s+(\d{4})/);
   if (!dateMatch) return null;
   const [, dd, monAbbr, yyyy] = dateMatch;
   const mm = MONTH_ABBR[monAbbr];
   if (!mm) return null;
-  const headerDate = `${yyyy}-${mm}-${dd}`;
+  const headerDate = `${yyyy}-${mm}-${dd.padStart(2, '0')}`;
 
   const rows: ParsedRow[] = [];
   for (const line of lines.slice(1)) {
@@ -163,7 +168,18 @@ async function fetchCnbDailyFile(dateStr: string): Promise<ParsedFile | null> {
     }
     return null;
   }
-  return parseDailyTxt(await res.text());
+  const text = await res.text();
+  const parsed = parseDailyTxt(text);
+  if (!parsed) {
+    // This is the case that turned out to matter: ČNB answering 200 every
+    // time, but parseDailyTxt() rejecting the body anyway — meaning the
+    // real page structure doesn't match what this was written against
+    // (never actually exercised against a live response before now). Log
+    // enough of the raw body to fix the parser against the real thing
+    // instead of guessing at it again.
+    console.log(`[fetch-exchange-rate] got 200 for ${dateStr} but failed to parse — first 500 chars: ${text.slice(0, 500)}`);
+  }
+  return parsed;
 }
 
 Deno.serve(async (req) => {
