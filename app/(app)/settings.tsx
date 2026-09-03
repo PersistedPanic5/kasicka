@@ -137,6 +137,8 @@ export default function Settings() {
   const [amountButtons, setAmountButtons] = useState<number[]>(DEFAULT_AMOUNT_BUTTONS);
   const [newAmount, setNewAmount] = useState('');
   const [savingAmountButtons, setSavingAmountButtons] = useState(false);
+  const [quickAmountsEnabled, setQuickAmountsEnabled] = useState(true);
+  const [savingQuickAmountsEnabled, setSavingQuickAmountsEnabled] = useState(false);
 
   // ── Currencies (Pavel's request) ────────────────────────────────────
   const [trackedCurrencies, setTrackedCurrencies] = useState<string[]>([]);
@@ -194,7 +196,7 @@ export default function Settings() {
       supabase.from('accounts').select('*').eq('owner_id', user.id).order('sort_order'),
       supabase
         .from('profile')
-        .select('default_account_id, month_start_day, amount_buttons, tracked_currencies, active_currencies')
+        .select('default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, tracked_currencies, active_currencies')
         .eq('id', user.id)
         .maybeSingle(),
     ]);
@@ -207,6 +209,7 @@ export default function Settings() {
         ? profileRes.data.amount_buttons
         : DEFAULT_AMOUNT_BUTTONS
     );
+    setQuickAmountsEnabled(profileRes.data?.quick_amounts_enabled ?? true);
     setTrackedCurrencies(profileRes.data?.tracked_currencies ?? []);
     setActiveCurrencies(profileRes.data?.active_currencies ?? []);
     setLoading(false);
@@ -312,6 +315,15 @@ export default function Settings() {
     setSavingAmountButtons(true);
     await supabase.from('profile').update({ amount_buttons: next }).eq('id', user.id);
     setSavingAmountButtons(false);
+  }
+
+  async function toggleQuickAmountsEnabled() {
+    if (!user) return;
+    const next = !quickAmountsEnabled;
+    setQuickAmountsEnabled(next);
+    setSavingQuickAmountsEnabled(true);
+    await supabase.from('profile').update({ quick_amounts_enabled: next }).eq('id', user.id);
+    setSavingQuickAmountsEnabled(false);
   }
 
   function removeAmountButton(value: number) {
@@ -708,6 +720,33 @@ export default function Settings() {
             descColor={tokens.textMuted}
             chevronColor={tokens.textMuted}
           >
+            <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border, marginBottom: 10 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                  {t('more.quickAmountsToggleLabel')}
+                </Text>
+              </View>
+              <Pressable
+                onPress={toggleQuickAmountsEnabled}
+                disabled={savingQuickAmountsEnabled}
+                style={[
+                  styles.smallBtn,
+                  { backgroundColor: quickAmountsEnabled ? tokens.accent : tokens.cardAlt, opacity: savingQuickAmountsEnabled ? 0.6 : 1 },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: quickAmountsEnabled ? tokens.accentText : tokens.text,
+                    fontFamily: fontFamily.semibold,
+                    fontSize: 12,
+                  }}
+                >
+                  {quickAmountsEnabled ? t('more.quickAmountsOn') : t('more.quickAmountsOff')}
+                </Text>
+              </Pressable>
+            </View>
+            {quickAmountsEnabled && (
+              <>
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 10 }}>
               {t('more.quickAmountsHint')}
             </Text>
@@ -763,6 +802,8 @@ export default function Settings() {
                 </Text>
               </Pressable>
             </View>
+              </>
+            )}
           </Section>
 
           <Section

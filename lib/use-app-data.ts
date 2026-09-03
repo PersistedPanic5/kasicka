@@ -18,6 +18,10 @@ interface AppData {
    * schema's own default (supabase/migrations/0001_initial_schema.sql)
    * while still loading or if somehow empty. */
   amountButtons: number[];
+  /** `profile.quick_amounts_enabled` — whether the quick-amount chip row
+   * shows on Record Expense at all, toggled in Settings → Quick amounts.
+   * Defaults to true (today's always-on behavior) while still loading. */
+  quickAmountsEnabled: boolean;
   /** `profile.active_currencies` — the currencies (besides CZK) Record
    * Expense's currency picker cycles through, editable in Settings →
    * Currencies. Empty while loading or if none are active — the picker
@@ -46,6 +50,7 @@ export function useAppData(): AppData {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [monthStartDay, setMonthStartDay] = useState(1);
   const [amountButtons, setAmountButtons] = useState<number[]>([20, 50, 100, 200]);
+  const [quickAmountsEnabled, setQuickAmountsEnabled] = useState(true);
   const [activeCurrencies, setActiveCurrencies] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,6 +61,7 @@ export function useAppData(): AppData {
       setAccounts([]);
       setMonthStartDay(1);
       setAmountButtons([20, 50, 100, 200]);
+      setQuickAmountsEnabled(true);
       setActiveCurrencies([]);
       setLoading(false);
       return;
@@ -74,7 +80,7 @@ export function useAppData(): AppData {
       const [profileRes, categoriesRes, accountsRes] = await Promise.all([
         supabase
           .from('profile')
-          .select('default_account_id, month_start_day, amount_buttons, active_currencies')
+          .select('default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, active_currencies')
           .eq('id', user.id)
           .maybeSingle(),
         supabase.from('categories').select('*').eq('category_type', 'EXPENSE').order('sort_order'),
@@ -89,6 +95,7 @@ export function useAppData(): AppData {
           ? profileRes.data.amount_buttons
           : [20, 50, 100, 200]
       );
+      setQuickAmountsEnabled(profileRes.data?.quick_amounts_enabled ?? true);
       setActiveCurrencies(profileRes.data?.active_currencies ?? []);
       setCategories(categoriesRes.data ?? []);
       setAccounts(accountsRes.data ?? []);
@@ -102,5 +109,15 @@ export function useAppData(): AppData {
 
   useEffect(() => refresh(), [refresh]);
 
-  return { defaultAccountId, categories, accounts, monthStartDay, amountButtons, activeCurrencies, loading, refresh };
+  return {
+    defaultAccountId,
+    categories,
+    accounts,
+    monthStartDay,
+    amountButtons,
+    quickAmountsEnabled,
+    activeCurrencies,
+    loading,
+    refresh,
+  };
 }

@@ -72,7 +72,16 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const { tokens } = useTheme();
   const { t, language } = useLanguage();
   const { user } = useAuth();
-  const { defaultAccountId, categories, accounts, monthStartDay, amountButtons, activeCurrencies, loading: dataLoading } = useAppData();
+  const {
+    defaultAccountId,
+    categories,
+    accounts,
+    monthStartDay,
+    amountButtons,
+    quickAmountsEnabled,
+    activeCurrencies,
+    loading: dataLoading,
+  } = useAppData();
 
   const [entryType, setEntryType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [amount, setAmount] = useState('');
@@ -113,10 +122,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
   // profile.amount_buttons, editable in Settings → Quick amounts — falls
   // back to the schema default if it's ever empty (e.g. mid-edit there).
-  // These are always CZK shortcuts (the placeholder in Settings says so),
-  // so they're hidden whenever a foreign currency is selected below —
-  // adding "+50" to a PLN amount would silently mean something different
-  // from what the button shows.
+  // The whole row can also be turned off entirely there
+  // (quickAmountsEnabled) rather than relying on that fallback for "none".
   const quickAmounts = amountButtons.length > 0 ? amountButtons : [20, 50, 100, 200];
 
   function shiftedDateISO(offset: number) {
@@ -445,20 +452,30 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         </Text>
       )}
 
-      {currency === 'CZK' && (
-        <View style={styles.chipRow}>
-          {quickAmounts.map((v) => (
-            <Pressable
-              key={v}
-              onPress={() => setAmount((prev) => String((Number(prev) || 0) + v))}
-              style={[styles.chip, { backgroundColor: tokens.card }]}
-            >
-              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-                {v >= 0 ? `+${v}` : `−${Math.abs(v)}`}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
+      {/* Turned off entirely in Settings → Quick amounts if Pavel doesn't
+          want the row at all — see profile.quick_amounts_enabled. When on,
+          it stays visible even for a foreign currency (these presets are
+          CZK-scale numbers added to the field as-is, no conversion), with
+          the small label below just to keep that clear. */}
+      {quickAmountsEnabled && (
+        <>
+          <View style={styles.chipRow}>
+            {quickAmounts.map((v) => (
+              <Pressable
+                key={v}
+                onPress={() => setAmount((prev) => String((Number(prev) || 0) + v))}
+                style={[styles.chip, { backgroundColor: tokens.card }]}
+              >
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+                  {v >= 0 ? `+${v}` : `−${Math.abs(v)}`}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          {currency !== 'CZK' && (
+            <Text style={[styles.quickAmountsHint, { color: tokens.textMuted }]}>{t('home.quickAmountsInCzk')}</Text>
+          )}
+        </>
       )}
 
       {entryType === 'EXPENSE' && (
@@ -726,6 +743,7 @@ const styles = StyleSheet.create({
   currencySuffix: { paddingHorizontal: 4, paddingBottom: 12 },
   czkEquivalent: { textAlign: 'center', fontSize: 13, fontFamily: fontFamily.medium, marginTop: -8 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+  quickAmountsHint: { textAlign: 'center', fontSize: 11, fontFamily: fontFamily.medium, marginTop: -4 },
   chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 },
   noteInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   splitToggle: { alignItems: 'center', paddingVertical: 2 },

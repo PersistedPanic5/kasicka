@@ -54,6 +54,10 @@ export interface Profile {
   default_account_id: string | null;
   month_start_day: number;
   amount_buttons: number[];
+  /** Record Expense's quick-amount chip row — on by default, but Pavel can
+   * turn it off entirely in Settings → Quick amounts rather than the row
+   * always falling back to a default set. See migration 0008. */
+  quick_amounts_enabled: boolean;
   notification_prefs: Record<string, unknown>;
   expo_push_token: string | null;
   theme: ThemeMode;
