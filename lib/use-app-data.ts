@@ -18,6 +18,11 @@ interface AppData {
    * schema's own default (supabase/migrations/0001_initial_schema.sql)
    * while still loading or if somehow empty. */
   amountButtons: number[];
+  /** `profile.active_currencies` — the currencies (besides CZK) Record
+   * Expense's currency picker cycles through, editable in Settings →
+   * Currencies. Empty while loading or if none are active — the picker
+   * just doesn't offer anything besides CZK in that case. */
+  activeCurrencies: string[];
   /** True while the first-sign-in bootstrap and/or the fetch below is
    * still in flight — callers should disable Save rather than let it
    * write with a null account/category. */
@@ -41,6 +46,7 @@ export function useAppData(): AppData {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [monthStartDay, setMonthStartDay] = useState(1);
   const [amountButtons, setAmountButtons] = useState<number[]>([20, 50, 100, 200]);
+  const [activeCurrencies, setActiveCurrencies] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => {
@@ -50,6 +56,7 @@ export function useAppData(): AppData {
       setAccounts([]);
       setMonthStartDay(1);
       setAmountButtons([20, 50, 100, 200]);
+      setActiveCurrencies([]);
       setLoading(false);
       return;
     }
@@ -65,7 +72,11 @@ export function useAppData(): AppData {
       }
 
       const [profileRes, categoriesRes, accountsRes] = await Promise.all([
-        supabase.from('profile').select('default_account_id, month_start_day, amount_buttons').eq('id', user.id).maybeSingle(),
+        supabase
+          .from('profile')
+          .select('default_account_id, month_start_day, amount_buttons, active_currencies')
+          .eq('id', user.id)
+          .maybeSingle(),
         supabase.from('categories').select('*').eq('category_type', 'EXPENSE').order('sort_order'),
         supabase.from('accounts').select('*').eq('active', true).order('sort_order'),
       ]);
@@ -78,6 +89,7 @@ export function useAppData(): AppData {
           ? profileRes.data.amount_buttons
           : [20, 50, 100, 200]
       );
+      setActiveCurrencies(profileRes.data?.active_currencies ?? []);
       setCategories(categoriesRes.data ?? []);
       setAccounts(accountsRes.data ?? []);
       setLoading(false);
@@ -90,5 +102,5 @@ export function useAppData(): AppData {
 
   useEffect(() => refresh(), [refresh]);
 
-  return { defaultAccountId, categories, accounts, monthStartDay, amountButtons, loading, refresh };
+  return { defaultAccountId, categories, accounts, monthStartDay, amountButtons, activeCurrencies, loading, refresh };
 }

@@ -411,11 +411,11 @@ export default function Planning() {
     let count = 0;
     for (const item of longTermItems) {
       if (!item.active) continue;
-      const cycle = currentCycle(item);
-      if (isReserveTransferDue(item, cycle, longTermTx) || isFinalPaymentDue(item, cycle, longTermTx)) count++;
+      const cycle = currentCycle(item, monthStartDay);
+      if (isReserveTransferDue(item, cycle, longTermTx, monthStartDay) || isFinalPaymentDue(item, cycle, longTermTx, monthStartDay)) count++;
     }
     return count;
-  }, [longTermItems, longTermTx]);
+  }, [longTermItems, longTermTx, monthStartDay]);
 
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 60 }}>
@@ -691,10 +691,10 @@ export default function Planning() {
               </Text>
             )}
             {visibleLongTerm.map((item) => {
-              const cycle = currentCycle(item);
+              const cycle = currentCycle(item, monthStartDay);
               const { reserved, pct } = accrualProgress(item, cycle, longTermTx);
-              const reserveDue = isReserveTransferDue(item, cycle, longTermTx);
-              const paymentDue = isFinalPaymentDue(item, cycle, longTermTx);
+              const reserveDue = isReserveTransferDue(item, cycle, longTermTx, monthStartDay);
+              const paymentDue = isFinalPaymentDue(item, cycle, longTermTx, monthStartDay);
               return (
                 <View key={item.id} style={[styles.ltCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
                   <View style={styles.ltCardTop}>
@@ -744,10 +744,25 @@ export default function Planning() {
                   </Text>
 
                   {(reserveDue || paymentDue) && (
-                    <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12, marginTop: 6 }}>
-                      {paymentDue ? t('more.longTermPaymentDue') : t('more.longTermReserveDue')} ·{' '}
-                      {t('more.longTermSeeWizard')}
-                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 6 }}>
+                      <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                        {paymentDue ? t('more.longTermPaymentDue') : t('more.longTermReserveDue')} ·
+                      </Text>
+                      <Link href="/payments" asChild>
+                        <Pressable>
+                          <Text
+                            style={{
+                              color: tokens.greenFg,
+                              fontFamily: fontFamily.extrabold,
+                              fontSize: 12,
+                              textDecorationLine: 'underline',
+                            }}
+                          >
+                            {t('more.longTermSeePayments')}
+                          </Text>
+                        </Pressable>
+                      </Link>
+                    </View>
                   )}
                 </View>
               );

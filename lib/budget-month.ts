@@ -18,11 +18,15 @@
  * change and nothing breaks for anyone who never touches the setting.
  *
  * Deliberately NOT used by recurring_items' `day_of_month` (a calendar-day
- * trigger for "is this bill due yet") or long_term_items' reserve-cycle
- * math in lib/long-term.ts (`payment_month` / `first_reserve_month`,
- * always whole calendar months) — those are separate business rules from
- * "which budget-month bucket does this transaction's amount count
- * towards," which is all this file is about.
+ * trigger for "is this bill due yet") — that one stays a plain
+ * day-of-month rule. long_term_items DOES use this now: `payment_month` /
+ * `first_reserve_month` are still stored as whole calendar months, but
+ * whether a reserve transfer/payment is *due yet* (lib/long-term.ts's
+ * currentCycle/isReserveTransferDue/isFinalPaymentDue) is judged against
+ * the current budget-month cycle via budgetMonthForDate, not the raw
+ * calendar date — otherwise a cutoff day other than the 1st makes bills
+ * look due days before Pavel considers the month to have actually turned
+ * over (e.g. cutoff on the 10th: Sept 3rd is still budget-month "August").
  */
 
 export type BudgetMonthLabel = string; // 'yyyy-mm-01'

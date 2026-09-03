@@ -277,16 +277,16 @@ export default function MonthlyWizard() {
   const dueItems: DueEntry[] = useMemo(() => {
     return longTermItems
       .map((item) => {
-        const cycle = currentCycle(item);
+        const cycle = currentCycle(item, monthStartDay ?? 1);
         return {
           item,
           cycle,
-          reserveDue: isReserveTransferDue(item, cycle, longTermTx),
-          paymentDue: isFinalPaymentDue(item, cycle, longTermTx),
+          reserveDue: isReserveTransferDue(item, cycle, longTermTx, monthStartDay ?? 1),
+          paymentDue: isFinalPaymentDue(item, cycle, longTermTx, monthStartDay ?? 1),
         };
       })
       .filter((entry) => entry.reserveDue || entry.paymentDue);
-  }, [longTermItems, longTermTx]);
+  }, [longTermItems, longTermTx, monthStartDay]);
 
   async function handleConfirmReserve(entry: DueEntry, amount: number) {
     if (!user) return;
@@ -535,7 +535,7 @@ export default function MonthlyWizard() {
                   </Text>
                 )}
                 {longTermItems.map((item) => {
-                  const cycle = currentCycle(item);
+                  const cycle = currentCycle(item, monthStartDay ?? 1);
                   const { reserved, pct } = accrualProgress(item, cycle, longTermTx);
                   return (
                     <View key={item.id} style={[styles.ltCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
@@ -566,7 +566,7 @@ export default function MonthlyWizard() {
                 )}
                 {dueItems.map((entry) => {
                   const { item, cycle, reserveDue, paymentDue } = entry;
-                  const reserveAmount = monthlyReserveAmount(item, cycle, longTermTx);
+                  const reserveAmount = monthlyReserveAmount(item, cycle, longTermTx, monthStartDay ?? 1);
                   const reserveAccount = item.reserve_account_id ? accountById.get(item.reserve_account_id) ?? null : null;
                   const qrPayload = paymentDue
                     ? finalPaymentQrPayload(item)

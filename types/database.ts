@@ -58,6 +58,12 @@ export interface Profile {
   expo_push_token: string | null;
   theme: ThemeMode;
   language: 'en' | 'cs';
+  /** ISO 4217 codes Settings → Currencies has been told to track/download
+   * rates for — see supabase/migrations/0007_currencies.sql. */
+  tracked_currencies: string[];
+  /** Subset of tracked_currencies that shows up in Record Expense's
+   * currency picker. CZK is never in either list — it's the implicit base. */
+  active_currencies: string[];
 }
 export type ProfileInsert = Partial<Profile> & Pick<Profile, 'id'>;
 export type ProfileUpdate = Partial<Profile>;
@@ -121,6 +127,13 @@ export interface Transaction {
    * generated from the monthly wizard's QR step (source = 'LONG_TERM_QR')
    * — see supabase/migrations/0005_long_term_links.sql and lib/long-term.ts. */
   long_term_item_id: string | null;
+  /** Set only when this was entered in something other than CZK — `amount`
+   * above is always the converted CZK figure; these three are purely
+   * informational (see supabase/migrations/0007_currencies.sql and
+   * lib/exchange-rates.ts). original_amount * exchange_rate === amount. */
+  original_currency: string | null;
+  original_amount: number | null;
+  exchange_rate: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -207,6 +220,21 @@ export type PushSubscriptionInsert = Partial<PushSubscriptionRow> &
   Pick<PushSubscriptionRow, 'owner_id' | 'endpoint' | 'p256dh' | 'auth'>;
 export type PushSubscriptionUpdate = Partial<PushSubscriptionRow>;
 
+/** A cached ČNB daily fixing rate — see supabase/migrations/
+ * 0007_currencies.sql and lib/exchange-rates.ts. `rate` is CZK per
+ * `amount_unit` units of `currency_code` (some currencies, e.g. HUF, are
+ * quoted per 100 rather than per 1). Not owner-scoped — shared/global. */
+export interface ExchangeRateRow {
+  currency_code: string;
+  rate_date: string; // 'yyyy-mm-dd', always a day ČNB actually published
+  amount_unit: number;
+  rate: number;
+  fetched_at: string;
+}
+export type ExchangeRateInsert = Partial<ExchangeRateRow> &
+  Pick<ExchangeRateRow, 'currency_code' | 'rate_date' | 'rate'>;
+export type ExchangeRateUpdate = Partial<ExchangeRateRow>;
+
 /** Shape returned by the public `get_debt_by_share_token` RPC — see 0002. */
 export interface DebtShareView {
   description: string;
@@ -240,6 +268,11 @@ export interface Database {
         Row: PushSubscriptionRow;
         Insert: PushSubscriptionInsert;
         Update: PushSubscriptionUpdate;
+      };
+      exchange_rates: {
+        Row: ExchangeRateRow;
+        Insert: ExchangeRateInsert;
+        Update: ExchangeRateUpdate;
       };
     };
     Functions: {

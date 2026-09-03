@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushSubscriptionState } from '@/lib/push';
+import { COMMON_CURRENCIES, downloadRateRange, ensureRate, type ResolvedRate } from '@/lib/exchange-rates';
 import type { Language } from '@/lib/i18n';
 import type { Account, AccountType, Category } from '@/types/database';
 
@@ -18,6 +19,14 @@ const DEFAULT_AMOUNT_BUTTONS = [20, 50, 100, 200];
  * shortcut as the confusing "+-50". */
 function formatAmountButton(value: number): string {
   return value >= 0 ? `+${value}` : `−${Math.abs(value)}`;
+}
+
+/** lib/i18n.ts's t() is a plain lookup with no interpolation — this fills
+ * in `{name}`-style placeholders locally for the one or two status
+ * messages here that need a runtime number in them, without changing the
+ * shared i18n contract for the sake of a couple of strings. */
+function tf(template: string, vars: Record<string, string | number>): string {
+  return Object.entries(vars).reduce((s, [k, v]) => s.replaceAll(`{${k}}`, String(v)), template);
 }
 
 function ChevronIcon({ expanded, color }: { expanded: boolean; color: string }) {
@@ -128,6 +137,23 @@ export default function Settings() {
   const [amountButtons, setAmountButtons] = useState<number[]>(DEFAULT_AMOUNT_BUTTONS);
   const [newAmount, setNewAmount] = useState('');
   const [savingAmountButtons, setSavingAmountButtons] = useState(false);
+
+  // ── Currencies (Pavel's request) ────────────────────────────────────
+  const [trackedCurrencies, setTrackedCurrencies] = useState<string[]>([]);
+  const [activeCurrencies, setActiveCurrencies] = useState<string[]>([]);
+  const [savingCurrencies, setSavingCurrencies] = useState(false);
+  const [newCurrencyCode, setNewCurrencyCode] = useState('');
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [rangeFrom, setRangeFrom] = useState(todayIso.slice(0, 8) + '01'); // start of this month
+  const [rangeTo, setRangeTo] = useState(todayIso);
+  const [downloadingRange, setDownloadingRange] = useState(false);
+  const [rangeResult, setRangeResult] = useState<string | null>(null);
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const [checkDate, setCheckDate] = useState(todayIso);
+  const [checking, setChecking] = useState(false);
+  const [checkResults, setCheckResults] = useState<ResolvedRate[] | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [showArchivedCategories, setShowArchivedCategories] = useState(false);
   const [showArchivedAccounts, setShowArchivedAccounts] = useState(false);
@@ -166,7 +192,11 @@ export default function Settings() {
     const [categoriesRes, accountsRes, profileRes] = await Promise.all([
       supabase.from('categories').select('*').eq('owner_id', user.id).order('sort_order'),
       supabase.from('accounts').select('*').eq('owner_id', user.id).order('sort_order'),
-      supabase.from('profile').select('default_account_id, month_start_day, amount_buttons').eq('id', user.id).maybeSingle(),
+      supabase
+        .from('profile')
+        .select('default_account_id, month_start_day, amount_buttons, tracked_currencies, active_currencies')
+        .eq('id', user.id)
+        .maybeSingle(),
     ]);
     setCategories(categoriesRes.data ?? []);
     setAccounts(accountsRes.data ?? []);
@@ -177,6 +207,8 @@ export default function Settings() {
         ? profileRes.data.amount_buttons
         : DEFAULT_AMOUNT_BUTTONS
     );
+    setTrackedCurrencies(profileRes.data?.tracked_currencies ?? []);
+    setActiveCurrencies(profileRes.data?.active_currencies ?? []);
     setLoading(false);
   }, [user]);
 
@@ -300,6 +332,84 @@ export default function Settings() {
     }
     saveAmountButtons([...amountButtons, value].sort((a, b) => a - b));
     setNewAmount('');
+  }
+
+  // ── Currency actions ──────────────────────────────────────────────────
+  async function saveCurrencies(tracked: string[], active: string[]) {
+    if (!user) return;
+    setTrackedCurrencies(tracked);
+    setActiveCurrencies(active);
+    setSavingCurrencies(true);
+    await supabase.from('profile').update({ tracked_currencies: tracked, active_currencies: active }).eq('id', user.id);
+    setSavingCurrencies(false);
+  }
+
+  /** Tracking a currency auto-activates it (Pavel's answer: "auto-active
+   * until removed") — untracking drops it from both lists, since Record
+   * Expense shouldn't offer a currency Settings no longer downloads rates
+   * for. */
+  function toggleTracked(code: string) {
+    if (trackedCurrencies.includes(code)) {
+      saveCurrencies(
+        trackedCurrencies.filter((c) => c !== code),
+        activeCurrencies.filter((c) => c !== code)
+      );
+    } else {
+      saveCurrencies([...trackedCurrencies, code].sort(), [...activeCurrencies, code].sort());
+    }
+  }
+
+  /** Active is independent of tracked once a currency is tracked — this
+   * only ever removes/re-adds within the already-tracked set. */
+  function toggleActive(code: string) {
+    if (!trackedCurrencies.includes(code)) return;
+    if (activeCurrencies.includes(code)) {
+      saveCurrencies(trackedCurrencies, activeCurrencies.filter((c) => c !== code));
+    } else {
+      saveCurrencies(trackedCurrencies, [...activeCurrencies, code].sort());
+    }
+  }
+
+  function addCustomCurrency() {
+    const code = newCurrencyCode.trim().toUpperCase();
+    setNewCurrencyCode('');
+    if (!/^[A-Z]{3}$/.test(code) || trackedCurrencies.includes(code)) return;
+    saveCurrencies([...trackedCurrencies, code].sort(), [...activeCurrencies, code].sort());
+  }
+
+  async function runRangeDownload() {
+    setRangeError(null);
+    setRangeResult(null);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(rangeFrom) || !/^\d{4}-\d{2}-\d{2}$/.test(rangeTo) || rangeFrom > rangeTo) {
+      setRangeError(t('more.currencyDateRangeError'));
+      return;
+    }
+    setDownloadingRange(true);
+    const result = await downloadRateRange(rangeFrom, rangeTo);
+    setDownloadingRange(false);
+    if ('error' in result) {
+      setRangeError(result.error);
+      return;
+    }
+    setRangeResult(
+      tf(t('more.currencyDownloadResult'), { days: result.daysStored, currencies: result.currencies.length })
+    );
+  }
+
+  async function runCheckDate() {
+    setCheckError(null);
+    setCheckResults(null);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(checkDate) || trackedCurrencies.length === 0) {
+      setCheckError(t('more.currencyCheckNoTracked'));
+      return;
+    }
+    setChecking(true);
+    const results = await Promise.all(trackedCurrencies.map((c) => ensureRate(c, checkDate)));
+    setChecking(false);
+    const firstError = results.find((r) => r.error)?.error;
+    const rates = results.map((r) => r.rate).filter((r): r is ResolvedRate => r !== null);
+    setCheckResults(rates);
+    if (firstError && rates.length === 0) setCheckError(firstError);
   }
 
   async function togglePush() {
@@ -656,6 +766,214 @@ export default function Settings() {
           </Section>
 
           <Section
+            expanded={expandedSections.has('currencies')}
+            onToggle={() => toggleSection('currencies')}
+            title={t('more.currenciesTitle')}
+            description={t('more.currenciesSectionDesc')}
+            titleColor={tokens.text}
+            descColor={tokens.textMuted}
+            chevronColor={tokens.textMuted}
+          >
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13, marginBottom: 4 }}>
+              {t('more.currenciesTrackedLabel')}
+            </Text>
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 10 }}>
+              {t('more.currenciesTrackedHint')}
+            </Text>
+            <View style={styles.chipRow}>
+              {COMMON_CURRENCIES.map((c) => {
+                const tracked = trackedCurrencies.includes(c.code);
+                return (
+                  <Pressable
+                    key={c.code}
+                    onPress={() => toggleTracked(c.code)}
+                    disabled={savingCurrencies}
+                    style={[styles.chip, { backgroundColor: tracked ? tokens.accent : tokens.cardAlt }]}
+                  >
+                    <Text
+                      style={{
+                        color: tracked ? tokens.accentText : tokens.text,
+                        fontFamily: fontFamily.semibold,
+                        fontSize: 12,
+                      }}
+                    >
+                      {c.code}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+              {trackedCurrencies
+                .filter((code) => !COMMON_CURRENCIES.some((c) => c.code === code))
+                .map((code) => (
+                  <Pressable
+                    key={code}
+                    onPress={() => toggleTracked(code)}
+                    disabled={savingCurrencies}
+                    style={[styles.chip, { backgroundColor: tokens.accent }]}
+                  >
+                    <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                      {code}
+                    </Text>
+                  </Pressable>
+                ))}
+            </View>
+            <View style={[styles.addRow, { marginBottom: 16 }]}>
+              <TextInput
+                value={newCurrencyCode}
+                onChangeText={setNewCurrencyCode}
+                autoCapitalize="characters"
+                maxLength={3}
+                placeholder={t('more.currenciesCustomPlaceholder')}
+                placeholderTextColor={tokens.textMuted}
+                style={[styles.addInput, { color: tokens.text, borderColor: tokens.border }]}
+                onSubmitEditing={addCustomCurrency}
+              />
+              <Pressable
+                onPress={addCustomCurrency}
+                disabled={savingCurrencies || !newCurrencyCode.trim()}
+                style={[styles.addBtn, { backgroundColor: tokens.accent, opacity: newCurrencyCode.trim() ? 1 : 0.5 }]}
+              >
+                <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 13 }}>
+                  {t('more.currenciesTrackBtn')}
+                </Text>
+              </Pressable>
+            </View>
+
+            {trackedCurrencies.length > 0 && (
+              <>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13, marginBottom: 4 }}>
+                  {t('more.currenciesActiveLabel')}
+                </Text>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 10 }}>
+                  {t('more.currenciesActiveHint')}
+                </Text>
+                <View style={[styles.chipRow, { marginBottom: 16 }]}>
+                  {trackedCurrencies.map((code) => {
+                    const active = activeCurrencies.includes(code);
+                    return (
+                      <Pressable
+                        key={code}
+                        onPress={() => toggleActive(code)}
+                        disabled={savingCurrencies}
+                        style={[
+                          styles.chip,
+                          { backgroundColor: active ? tokens.greenBg : tokens.cardAlt, opacity: active ? 1 : 0.6 },
+                        ]}
+                      >
+                        <Text
+                          style={{
+                            color: active ? tokens.greenFg : tokens.textMuted,
+                            fontFamily: fontFamily.semibold,
+                            fontSize: 12,
+                          }}
+                        >
+                          {code}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            <View style={[styles.currencyDivider, { borderTopColor: tokens.border }]}>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13, marginBottom: 4 }}>
+                {t('more.currenciesDownloadLabel')}
+              </Text>
+              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 10 }}>
+                {t('more.currenciesDownloadHint')}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <TextInput
+                  value={rangeFrom}
+                  onChangeText={setRangeFrom}
+                  placeholder="yyyy-mm-dd"
+                  placeholderTextColor={tokens.textMuted}
+                  style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1, minWidth: 110 }]}
+                />
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>–</Text>
+                <TextInput
+                  value={rangeTo}
+                  onChangeText={setRangeTo}
+                  placeholder="yyyy-mm-dd"
+                  placeholderTextColor={tokens.textMuted}
+                  style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1, minWidth: 110 }]}
+                />
+                <Pressable
+                  onPress={runRangeDownload}
+                  disabled={downloadingRange}
+                  style={[styles.addBtn, { backgroundColor: tokens.accent, opacity: downloadingRange ? 0.6 : 1 }]}
+                >
+                  <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 13 }}>
+                    {downloadingRange ? t('more.currenciesDownloading') : t('more.currenciesDownloadBtn')}
+                  </Text>
+                </Pressable>
+              </View>
+              {rangeError && (
+                <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 8 }}>
+                  {rangeError}
+                </Text>
+              )}
+              {rangeResult && (
+                <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 8 }}>
+                  {rangeResult}
+                </Text>
+              )}
+            </View>
+
+            <View style={[styles.currencyDivider, { borderTopColor: tokens.border }]}>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13, marginBottom: 4 }}>
+                {t('more.currenciesCheckLabel')}
+              </Text>
+              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 10 }}>
+                {t('more.currenciesCheckHint')}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                <TextInput
+                  value={checkDate}
+                  onChangeText={setCheckDate}
+                  placeholder="yyyy-mm-dd"
+                  placeholderTextColor={tokens.textMuted}
+                  style={[styles.addInput, { color: tokens.text, borderColor: tokens.border, flex: 1, minWidth: 110 }]}
+                />
+                <Pressable
+                  onPress={runCheckDate}
+                  disabled={checking || trackedCurrencies.length === 0}
+                  style={[
+                    styles.addBtn,
+                    { backgroundColor: tokens.accent, opacity: checking || trackedCurrencies.length === 0 ? 0.6 : 1 },
+                  ]}
+                >
+                  <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 13 }}>
+                    {checking ? t('more.currenciesChecking') : t('more.currenciesCheckBtn')}
+                  </Text>
+                </Pressable>
+              </View>
+              {checkError && (
+                <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 8 }}>
+                  {checkError}
+                </Text>
+              )}
+              {checkResults && checkResults.length > 0 && (
+                <View style={{ marginTop: 10, gap: 4 }}>
+                  {checkResults.map((r) => (
+                    <View key={r.currency} style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                        {r.amountUnit > 1 ? `${r.amountUnit} ` : ''}
+                        {r.currency}
+                      </Text>
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                        {r.rate} {t('common.czk')}
+                        {r.resolvedDate !== checkDate ? ` (${r.resolvedDate})` : ''}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          </Section>
+
+          <Section
             expanded={expandedSections.has('language')}
             onToggle={() => toggleSection('language')}
             title={t('more.language')}
@@ -805,6 +1123,7 @@ const styles = StyleSheet.create({
   section: { marginBottom: 22 },
   sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 4 },
   archiveToggleRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 8 },
+  currencyDivider: { borderTopWidth: 1, paddingTop: 14, marginTop: 4 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -70,9 +70,20 @@ export interface ReserveCycle {
 }
 
 /** The effective reserve window for "right now" — handles repeat_yearly
- * rolling forward past a completed cycle. */
-export function currentCycle(item: LongTermItem, today: Date = new Date()): ReserveCycle {
-  const todayMonth = toMonthStart(today.toISOString().slice(0, 10));
+ * rolling forward past a completed cycle.
+ *
+ * `monthStartDay` matters here: "right now" means the budget-month cycle
+ * you're actually in (lib/budget-month.ts), not the raw calendar month. If
+ * your period cuts over on the 10th, September 3rd is still budget-month
+ * "August" — a repeat_yearly item shouldn't roll forward, and (more
+ * visibly) isReserveTransferDue/isFinalPaymentDue below shouldn't fire,
+ * just because the calendar flipped to September a few days early. This
+ * reverses an earlier, deliberate choice to keep long-term math on pure
+ * calendar months (see the historical note in lib/budget-month.ts) — Pavel
+ * confirmed the budget-month cycle is what should govern "is this due
+ * yet," matching how he actually thinks about "still being in August." */
+export function currentCycle(item: LongTermItem, monthStartDay: number = 1, today: Date = new Date()): ReserveCycle {
+  const todayMonth = budgetMonthForDate(today.toISOString().slice(0, 10), monthStartDay);
   let paymentMonth = toMonthStart(item.payment_month);
   let firstReserveMonth = toMonthStart(item.first_reserve_month);
   let rolled = false;
@@ -123,25 +134,34 @@ export function accrualProgress(
 }
 
 /** How much this month's reserve transfer should be, per reserve_amount_mode. */
-export function monthlyReserveAmount(item: LongTermItem, cycle: ReserveCycle, transactions: LongTermTx[]): number {
+export function monthlyReserveAmount(
+  item: LongTermItem,
+  cycle: ReserveCycle,
+  transactions: LongTermTx[],
+  monthStartDay: number = 1
+): number {
   if (item.reserve_amount_mode === 'MANUAL') {
     return item.manual_monthly_reserve ?? 0;
   }
   const { reserved } = accrualProgress(item, cycle, transactions);
   const remaining = Math.max(0, item.full_payment_amount - reserved);
-  const today = toMonthStart(new Date().toISOString().slice(0, 10));
+  const today = budgetMonthForDate(new Date().toISOString().slice(0, 10), monthStartDay);
   const monthsLeft = Math.max(1, monthDiff(today, cycle.paymentMonth));
   return Math.round((remaining / monthsLeft) * 100) / 100;
 }
 
+/** monthStartDay (default 1) makes "this month" mean the current
+ * budget-month cycle, not the raw calendar month — see currentCycle's
+ * comment above for why that's the correct behavior. */
 export function isReserveTransferDue(
   item: LongTermItem,
   cycle: ReserveCycle,
   transactions: LongTermTx[],
+  monthStartDay: number = 1,
   today: Date = new Date()
 ): boolean {
   if (!item.active) return false;
-  const currentMonth = toMonthStart(today.toISOString().slice(0, 10));
+  const currentMonth = budgetMonthForDate(today.toISOString().slice(0, 10), monthStartDay);
   const inWindow = monthKey(currentMonth) >= monthKey(cycle.firstReserveMonth) && monthKey(currentMonth) < monthKey(cycle.paymentMonth);
   if (!inWindow) return false;
   const alreadyDone = transactions.some(
@@ -154,10 +174,11 @@ export function isFinalPaymentDue(
   item: LongTermItem,
   cycle: ReserveCycle,
   transactions: LongTermTx[],
+  monthStartDay: number = 1,
   today: Date = new Date()
 ): boolean {
   if (!item.active) return false;
-  const currentMonth = toMonthStart(today.toISOString().slice(0, 10));
+  const currentMonth = budgetMonthForDate(today.toISOString().slice(0, 10), monthStartDay);
   if (monthKey(currentMonth) !== monthKey(cycle.paymentMonth)) return false;
   const alreadyDone = transactions.some(
     (tx) => tx.long_term_item_id === item.id && tx.type === 'PAYMENT_FROM_RESERVE' && monthKey(tx.transaction_date) === monthKey(currentMonth)

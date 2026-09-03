@@ -133,7 +133,7 @@ export default function Payments() {
     if (!selectedMonth) return [];
     return longTermItems
       .map((item): MonthRow | null => {
-        const cycle = currentCycle(item);
+        const cycle = currentCycle(item, monthStartDay ?? 1);
         let kind: 'RESERVE' | 'PAYMENT' | null = null;
         if (selectedMonth === cycle.paymentMonth) kind = 'PAYMENT';
         else if (selectedMonth >= cycle.firstReserveMonth && selectedMonth < cycle.paymentMonth) kind = 'RESERVE';
@@ -149,7 +149,7 @@ export default function Payments() {
           ? Number(paidTx!.amount)
           : kind === 'PAYMENT'
           ? item.full_payment_amount
-          : monthlyReserveAmount(item, cycle, longTermTx);
+          : monthlyReserveAmount(item, cycle, longTermTx, monthStartDay ?? 1);
 
         const { pct } = accrualProgress(item, cycle, longTermTx);
 
@@ -157,7 +157,7 @@ export default function Payments() {
       })
       .filter((r): r is MonthRow => r !== null)
       .sort((a, b) => Number(a.paid) - Number(b.paid));
-  }, [longTermItems, longTermTx, selectedMonth]);
+  }, [longTermItems, longTermTx, selectedMonth, monthStartDay]);
 
   async function handleConfirm(row: MonthRow) {
     if (!user) return;

@@ -10,11 +10,11 @@ import { useLanguage } from '@/lib/language-context';
 
 const NAV_ITEMS = [
   { href: '/(app)/home', labelKey: 'nav.home' },
-  { href: '/(app)/overview', labelKey: 'nav.overview' },
+  { href: '/(app)/payments', labelKey: 'nav.payments' },
   { href: '/(app)/debts', labelKey: 'nav.debts' },
   { href: '/(app)/transactions', labelKey: 'nav.transactions' },
+  { href: '/(app)/overview', labelKey: 'nav.overview' },
   { href: '/(app)/planning', labelKey: 'nav.planning' },
-  { href: '/(app)/payments', labelKey: 'nav.payments' },
   { href: '/(app)/settings', labelKey: 'nav.settings' },
 ] as const;
 

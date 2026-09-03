@@ -1,4 +1,4 @@
-import { createElement, useMemo, useRef, useState } from 'react';
+import { createElement, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
@@ -7,6 +7,30 @@ import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
+import { ensureRate, toCzk, type ResolvedRate } from '@/lib/exchange-rates';
+import {
+  createDebtsForSplit,
+  emptySplitPerson,
+  newSplitPersonId,
+  splitEvenly,
+  splitPeopleSum,
+  validSplitPeople,
+  type SplitPerson,
+} from '@/lib/split-people';
+
+const WEEKDAY_SHORT_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const WEEKDAY_SHORT_CS = ['Ne', 'Po', 'Út', 'St', 'Čt', 'Pá', 'So'];
+const MONTH_SHORT_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Wed 3 Sep" / "St 3. 9." — the short weekday+date shown in brackets next
+ * to Today/Tomorrow/±N days (Pavel's request), so the day shifter is never
+ * ambiguous about which actual date it landed on. */
+function formatShortDate(iso: string, language: 'en' | 'cs'): string {
+  const d = new Date(`${iso}T00:00:00`);
+  const weekday = language === 'cs' ? WEEKDAY_SHORT_CS[d.getDay()] : WEEKDAY_SHORT_EN[d.getDay()];
+  const day = d.getDate();
+  return language === 'cs' ? `${weekday} ${day}. ${d.getMonth() + 1}.` : `${weekday} ${day} ${MONTH_SHORT_EN[d.getMonth()]}`;
+}
 
 /**
  * The fast expense-capture form — the single most important screen in the
@@ -46,24 +70,33 @@ import { budgetMonthForDate } from '@/lib/budget-month';
  */
 export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 'desktop' }) {
   const { tokens } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { user } = useAuth();
-  const { defaultAccountId, categories, accounts, monthStartDay, amountButtons, loading: dataLoading } = useAppData();
+  const { defaultAccountId, categories, accounts, monthStartDay, amountButtons, activeCurrencies, loading: dataLoading } = useAppData();
 
   const [entryType, setEntryType] = useState<'EXPENSE' | 'INCOME'>('EXPENSE');
   const [amount, setAmount] = useState('');
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [dayOffset, setDayOffset] = useState(0);
   const [note, setNote] = useState('');
+
+  // ── Currency (Pavel's request) ──────────────────────────────────────
+  const [currency, setCurrency] = useState('CZK');
+  const [rateInfo, setRateInfo] = useState<ResolvedRate | null>(null);
+  const [rateLoading, setRateLoading] = useState(false);
+  const [rateError, setRateError] = useState<string | null>(null);
+
+  // ── Split with someone(s) (Pavel's multi-person rebuild) ────────────
   const [splitEnabled, setSplitEnabled] = useState(false);
-  const [splitName, setSplitName] = useState('');
-  const [splitAmount, setSplitAmount] = useState('');
+  const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
+  const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
+
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [shareLink, setShareLink] = useState<string | null>(null);
-  const [linkCopied, setLinkCopied] = useState(false);
+  const [shareLinks, setShareLinks] = useState<{ name: string; link: string }[]>([]);
+  const [copiedLinkIdx, setCopiedLinkIdx] = useState<number | null>(null);
 
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
@@ -80,20 +113,78 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
   // profile.amount_buttons, editable in Settings → Quick amounts — falls
   // back to the schema default if it's ever empty (e.g. mid-edit there).
+  // These are always CZK shortcuts (the placeholder in Settings says so),
+  // so they're hidden whenever a foreign currency is selected below —
+  // adding "+50" to a PLN amount would silently mean something different
+  // from what the button shows.
   const quickAmounts = amountButtons.length > 0 ? amountButtons : [20, 50, 100, 200];
-
-  const dateLabel = useMemo(() => {
-    if (dayOffset === 0) return t('common.today');
-    if (dayOffset === 1) return t('common.tomorrow');
-    if (dayOffset === -1) return t('common.yesterday');
-    return dayOffset > 0 ? `+${dayOffset} ${t('common.days')}` : `${dayOffset} ${t('common.days')}`;
-  }, [dayOffset, t]);
 
   function shiftedDateISO(offset: number) {
     const d = new Date();
     d.setDate(d.getDate() + offset);
     return d.toISOString().slice(0, 10);
   }
+
+  const transactionDateISO = useMemo(() => shiftedDateISO(dayOffset), [dayOffset]);
+
+  const dateLabel = useMemo(() => {
+    const short = formatShortDate(transactionDateISO, language);
+    if (dayOffset === 0) return `${t('common.today')} (${short})`;
+    if (dayOffset === 1) return `${t('common.tomorrow')} (${short})`;
+    if (dayOffset === -1) return `${t('common.yesterday')} (${short})`;
+    const n = dayOffset > 0 ? `+${dayOffset} ${t('common.days')}` : `${dayOffset} ${t('common.days')}`;
+    return `${n} (${short})`;
+  }, [dayOffset, transactionDateISO, language, t]);
+
+  // Cycles CZK → each active currency → back to CZK (Pavel's answer: CZK
+  // stays part of the cycle, one control does everything). Tapping the
+  // small currency badge next to the amount calls this.
+  function cycleCurrency() {
+    const list = ['CZK', ...activeCurrencies];
+    const idx = list.indexOf(currency);
+    setCurrency(list[(idx + 1) % list.length]);
+  }
+
+  // Fetches (cache-first — see lib/exchange-rates.ts) the rate for the
+  // selected currency/date whenever either changes, NOT on every keystroke
+  // of the amount itself — the rate doesn't depend on how much was typed,
+  // only on which currency and which day. A cache miss triggers a real
+  // ČNB call in the background (via the fetch-exchange-rate Edge
+  // Function) and gets stored for next time, per Pavel's "if this
+  // particular day is not downloaded yet, it should be downloaded in
+  // background and saved to the database."
+  useEffect(() => {
+    if (currency === 'CZK') {
+      setRateInfo(null);
+      setRateError(null);
+      return;
+    }
+    let cancelled = false;
+    setRateLoading(true);
+    setRateError(null);
+    ensureRate(currency, transactionDateISO).then(({ rate, error }) => {
+      if (cancelled) return;
+      setRateLoading(false);
+      if (error) {
+        setRateError(error);
+        setRateInfo(null);
+      } else {
+        setRateInfo(rate);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [currency, transactionDateISO]);
+
+  // Live CZK-equivalent preview shown next to the amount input — recomputes
+  // on every keystroke from the already-fetched rate, no extra network call.
+  const czkEquivalent = useMemo(() => {
+    if (currency === 'CZK' || !rateInfo) return null;
+    const numeric = Number(amount);
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    return toCzk(numeric, rateInfo);
+  }, [currency, rateInfo, amount]);
 
   function linkForToken(token: string) {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -133,6 +224,34 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setPhotoUploading(false);
   }
 
+  // ── Split-people helpers (multi-person rebuild) ─────────────────────
+  const splitSum = useMemo(() => splitPeopleSum(splitPeople), [splitPeople]);
+  const splitTotalNumeric = Number(splitTotalAmount) || 0;
+  const splitRemaining = Math.round((splitTotalNumeric - splitSum) * 100) / 100;
+
+  function addSplitPerson() {
+    setSplitPeople((prev) => [...prev, emptySplitPerson()]);
+  }
+  function removeSplitPerson(id: string) {
+    setSplitPeople((prev) => (prev.length <= 1 ? prev : prev.filter((p) => p.id !== id)));
+  }
+  function updateSplitPerson(id: string, field: 'name' | 'amount', value: string) {
+    setSplitPeople((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  }
+  /** Divides splitTotalAmount evenly across the current people list —
+   * re-pressable any time the total or the people list changes, since it's
+   * a pure recompute from whatever's currently in those two, not something
+   * that accumulates. */
+  function handleSplitEvenly() {
+    setSplitPeople((prev) => splitEvenly(splitTotalNumeric, prev));
+  }
+  function resetSplitState() {
+    setSplitEnabled(false);
+    setSplitTotalAmount('');
+    setSplitMessage('');
+    setSplitPeople([emptySplitPerson()]);
+  }
+
   async function handleSave() {
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) return;
@@ -143,18 +262,39 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       return;
     }
 
-    const numericSplit = Number(splitAmount);
-    const splitting = isExpense && splitEnabled && splitName.trim().length > 0 && numericSplit > 0;
-    if (isExpense && splitEnabled && splitting && numericSplit > numericAmount) {
+    // A foreign currency needs its rate resolved before there's a CZK
+    // amount to save at all — ensureRate() already kicked off the fetch
+    // as soon as the currency was picked (see the effect above), so this
+    // is normally instant; it only blocks Save while that first fetch for
+    // a brand-new date/currency pair is genuinely still in flight.
+    if (currency !== 'CZK') {
+      if (rateLoading) {
+        setErrorMsg(t('home.rateFetching'));
+        return;
+      }
+      if (rateError || !rateInfo) {
+        setErrorMsg(`${t('home.rateErrorPrefix')} ${rateError ?? ''}`);
+        return;
+      }
+    }
+    const czkAmount = currency !== 'CZK' && rateInfo ? toCzk(numericAmount, rateInfo) : numericAmount;
+
+    const validPeople = validSplitPeople(splitPeople);
+    const splitting = isExpense && splitEnabled && validPeople.length > 0 && splitTotalNumeric > 0;
+    if (splitting && splitTotalNumeric > czkAmount) {
       setErrorMsg(t('home.splitTooBig'));
+      return;
+    }
+    if (splitting && splitSum > splitTotalNumeric + 0.01) {
+      setErrorMsg(t('home.splitOverAllocatedError'));
       return;
     }
 
     setSaving(true);
     setErrorMsg(null);
-    setShareLink(null);
+    setShareLinks([]);
 
-    const transactionDate = shiftedDateISO(dayOffset);
+    const transactionDate = transactionDateISO;
     // month_start_day-aware — see lib/budget-month.ts. Defaults to plain
     // calendar months until Settings → Profile & preferences sets it.
     const budgetMonth = budgetMonthForDate(transactionDate, monthStartDay);
@@ -171,9 +311,12 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         // categories yet — build-roadmap-v1.md Phase 4) — category_id is
         // nullable on transactions for exactly this.
         category_id: isExpense ? activeCategoryId : null,
-        amount: numericAmount,
+        amount: czkAmount,
         note: note.trim() || null,
         receipt_photo_url: photoPath,
+        original_currency: currency !== 'CZK' ? currency : null,
+        original_amount: currency !== 'CZK' ? numericAmount : null,
+        exchange_rate: currency !== 'CZK' && rateInfo ? rateInfo.rate / rateInfo.amountUnit : null,
       })
       .select('id')
       .single();
@@ -185,26 +328,18 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     }
 
     if (splitting) {
-      const { data: debt, error: debtError } = await supabase
-        .from('debts')
-        .insert({
-          owner_id: user.id,
-          transaction_id: transaction.id,
-          owed_by_name: splitName.trim(),
-          amount: numericSplit,
-          target_account_id: activeAccountId,
-          message: splitMessage.trim() || null,
-        })
-        .select('share_token')
-        .single();
-
-      if (debtError) {
-        // The expense itself is already saved — a failed debt link isn't
-        // worth losing that, so surface it but don't roll anything back.
-        setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${debtError.message}`);
-      } else if (debt) {
-        setShareLink(linkForToken(debt.share_token));
-      }
+      // Created one by one (see lib/split-people.ts) — the expense itself
+      // is already saved either way, so a partial failure here surfaces an
+      // error without rolling anything back.
+      const { links, error: splitError } = await createDebtsForSplit({
+        ownerId: user.id,
+        transactionId: transaction.id,
+        targetAccountId: activeAccountId,
+        message: splitMessage.trim() || null,
+        people: validPeople,
+      });
+      if (splitError) setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${splitError}`);
+      setShareLinks(links.map((l) => ({ name: l.name, link: linkForToken(l.token) })));
     }
 
     setSavedFlash(true);
@@ -212,22 +347,21 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setEntryType('EXPENSE');
     setAmount('');
     setNote('');
-    setSplitEnabled(false);
-    setSplitName('');
-    setSplitAmount('');
-    setSplitMessage('');
-    setLinkCopied(false);
+    setCurrency('CZK');
+    resetSplitState();
+    setCopiedLinkIdx(null);
     setSelectedAccountId(null);
     clearPhoto();
     setSaving(false);
   }
 
-  async function copyShareLink() {
-    if (!shareLink) return;
+  async function copyShareLink(idx: number) {
+    const link = shareLinks[idx];
+    if (!link) return;
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-      await navigator.clipboard.writeText(shareLink);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 1500);
+      await navigator.clipboard.writeText(link.link);
+      setCopiedLinkIdx(idx);
+      setTimeout(() => setCopiedLinkIdx(null), 1500);
     }
   }
 
@@ -263,7 +397,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         >
           <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>−</Text>
         </Pressable>
-        <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, width: 90, textAlign: 'center' }}>
+        <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, minWidth: 130, textAlign: 'center' }}>
           {dateLabel}
         </Text>
         <Pressable
@@ -274,28 +408,55 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         </Pressable>
       </View>
 
-      <TextInput
-        value={amount}
-        onChangeText={setAmount}
-        keyboardType="numeric"
-        placeholder="0"
-        placeholderTextColor={tokens.textMuted}
-        style={[styles.amountInput, { color: tokens.text }]}
-      />
-
-      <View style={styles.chipRow}>
-        {quickAmounts.map((v) => (
+      <View style={styles.amountRow}>
+        <TextInput
+          value={amount}
+          onChangeText={setAmount}
+          keyboardType="numeric"
+          placeholder="0"
+          placeholderTextColor={tokens.textMuted}
+          style={[styles.amountInput, { color: tokens.text }]}
+        />
+        {/* Tap cycles CZK → each active currency → back to CZK (Pavel's
+            answer: CZK is part of the cycle, one control does everything).
+            Only shown once there's something to cycle through. */}
+        {activeCurrencies.length > 0 && (
           <Pressable
-            key={v}
-            onPress={() => setAmount((prev) => String((Number(prev) || 0) + v))}
-            style={[styles.chip, { backgroundColor: tokens.card }]}
+            onPress={cycleCurrency}
+            style={[styles.currencyBadge, { backgroundColor: tokens.card, borderColor: tokens.border }]}
           >
-            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
-              {v >= 0 ? `+${v}` : `−${Math.abs(v)}`}
-            </Text>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>{currency}</Text>
           </Pressable>
-        ))}
+        )}
       </View>
+
+      {currency !== 'CZK' && (
+        <Text style={[styles.czkEquivalent, { color: tokens.textMuted }]}>
+          {rateLoading
+            ? t('home.rateFetching')
+            : rateError
+            ? `${t('home.rateErrorPrefix')} ${rateError}`
+            : czkEquivalent !== null
+            ? `≈ ${czkEquivalent} ${t('common.czk')}`
+            : ' '}
+        </Text>
+      )}
+
+      {currency === 'CZK' && (
+        <View style={styles.chipRow}>
+          {quickAmounts.map((v) => (
+            <Pressable
+              key={v}
+              onPress={() => setAmount((prev) => String((Number(prev) || 0) + v))}
+              style={[styles.chip, { backgroundColor: tokens.card }]}
+            >
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>
+                {v >= 0 ? `+${v}` : `−${Math.abs(v)}`}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
 
       {entryType === 'EXPENSE' && (
         <View style={styles.chipRow}>
@@ -429,18 +590,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
       {entryType === 'EXPENSE' && splitEnabled && (
         <View style={[styles.splitPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+          {/* Amount + message stay on top (Pavel's request) — the people
+              list is at the end, below the evenly-split control. */}
           <TextInput
-            value={splitName}
-            onChangeText={setSplitName}
-            placeholder={t('home.whoOwesPlaceholder')}
-            placeholderTextColor={tokens.textMuted}
-            style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
-          />
-          <TextInput
-            value={splitAmount}
-            onChangeText={setSplitAmount}
+            value={splitTotalAmount}
+            onChangeText={setSplitTotalAmount}
             keyboardType="numeric"
-            placeholder={t('home.howMuchPlaceholder')}
+            placeholder={t('home.splitTotalPlaceholder')}
             placeholderTextColor={tokens.textMuted}
             style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
           />
@@ -451,6 +607,60 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             placeholderTextColor={tokens.textMuted}
             style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
           />
+
+          <View style={styles.splitEvenlyRow}>
+            <Pressable
+              onPress={handleSplitEvenly}
+              disabled={splitTotalNumeric <= 0}
+              style={[styles.splitAddPersonBtn, { backgroundColor: tokens.cardAlt, opacity: splitTotalNumeric > 0 ? 1 : 0.5 }]}
+            >
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                {t('home.splitEvenlyBtn')}
+              </Text>
+            </Pressable>
+            <Text
+              style={{
+                color: splitRemaining === 0 ? tokens.greenFg : splitRemaining < 0 ? tokens.coral : tokens.textMuted,
+                fontFamily: fontFamily.semibold,
+                fontSize: 12.5,
+              }}
+            >
+              {splitSum} / {splitTotalNumeric || 0} {t('common.czk')}
+              {splitRemaining > 0 ? ` · ${t('home.splitStillMissing')} ${splitRemaining}` : ''}
+              {splitRemaining < 0 ? ` · ${t('home.splitOverAllocated')} ${Math.abs(splitRemaining)}` : ''}
+            </Text>
+          </View>
+
+          {splitPeople.map((p) => (
+            <View key={p.id} style={styles.splitPersonRow}>
+              <TextInput
+                value={p.name}
+                onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
+                placeholder={t('home.whoOwesPlaceholder')}
+                placeholderTextColor={tokens.textMuted}
+                style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border, flex: 2 }]}
+              />
+              <TextInput
+                value={p.amount}
+                onChangeText={(v) => updateSplitPerson(p.id, 'amount', v)}
+                keyboardType="numeric"
+                placeholder={t('home.howMuchPlaceholder')}
+                placeholderTextColor={tokens.textMuted}
+                style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border, flex: 1 }]}
+              />
+              {splitPeople.length > 1 && (
+                <Pressable onPress={() => removeSplitPerson(p.id)} hitSlop={8}>
+                  <Text style={{ color: tokens.coral, fontFamily: fontFamily.bold, fontSize: 16 }}>×</Text>
+                </Pressable>
+              )}
+            </View>
+          ))}
+          <Pressable onPress={addSplitPerson} style={[styles.splitAddPersonBtn, { backgroundColor: tokens.cardAlt }]}>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+              {t('home.addPersonBtn')}
+            </Text>
+          </Pressable>
+
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
             {t('home.splitHint')}
           </Text>
@@ -463,23 +673,28 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         </Text>
       )}
 
-      {shareLink && (
+      {shareLinks.length > 0 && (
         <View style={[styles.shareBox, { backgroundColor: tokens.greenBg }]}>
-          <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5, marginBottom: 6 }}>
+          <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
             {t('home.shareLinkCreated')}
           </Text>
-          <Text
-            selectable
-            numberOfLines={1}
-            style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 8 }}
-          >
-            {shareLink}
-          </Text>
-          <Pressable onPress={copyShareLink} style={[styles.copyBtn, { backgroundColor: tokens.card }]}>
-            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-              {linkCopied ? t('common.copied') : t('common.copyLink')}
-            </Text>
-          </Pressable>
+          {shareLinks.map((link, idx) => (
+            <View key={link.link} style={styles.shareLinkRow}>
+              <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12 }}>{link.name}</Text>
+              <Text
+                selectable
+                numberOfLines={1}
+                style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12 }}
+              >
+                {link.link}
+              </Text>
+              <Pressable onPress={() => copyShareLink(idx)} style={[styles.copyBtn, { backgroundColor: tokens.card }]}>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                  {copiedLinkIdx === idx ? t('common.copied') : t('common.copyLink')}
+                </Text>
+              </Pressable>
+            </View>
+          ))}
         </View>
       )}
 
@@ -503,14 +718,21 @@ const styles = StyleSheet.create({
   typeToggleBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 9 },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 10, justifyContent: 'center' },
   dateShiftBtn: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
-  amountInput: { fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
+  amountRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  amountInput: { flex: 1, fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
+  currencyBadge: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
+  czkEquivalent: { textAlign: 'center', fontSize: 13, fontFamily: fontFamily.medium, marginTop: -8 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 },
   noteInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   splitToggle: { alignItems: 'center', paddingVertical: 2 },
   splitPanel: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 8 },
   splitInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
-  shareBox: { borderRadius: 14, padding: 12 },
+  splitPersonRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  splitEvenlyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  splitAddPersonBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
+  shareBox: { borderRadius: 14, padding: 12, gap: 8 },
+  shareLinkRow: { gap: 4 },
   copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
   saveBtn: { paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
   photoBtn: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10 },

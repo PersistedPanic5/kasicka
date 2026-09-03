@@ -7,6 +7,14 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
+import {
+  createDebtsForSplit,
+  emptySplitPerson,
+  splitEvenly,
+  splitPeopleSum,
+  validSplitPeople,
+  type SplitPerson,
+} from '@/lib/split-people';
 import type { DebtStatus } from '@/types/database';
 
 type TransactionRow = {
@@ -140,13 +148,13 @@ export default function Transactions() {
   const [detailDebtsLoading, setDetailDebtsLoading] = useState(false);
 
   const [splitEnabled, setSplitEnabled] = useState(false);
-  const [splitName, setSplitName] = useState('');
-  const [splitAmount, setSplitAmount] = useState('');
+  const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
+  const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
-  const [splitShareLink, setSplitShareLink] = useState<string | null>(null);
-  const [splitLinkCopied, setSplitLinkCopied] = useState(false);
+  const [splitShareLinks, setSplitShareLinks] = useState<{ name: string; link: string }[]>([]);
+  const [splitCopiedIdx, setSplitCopiedIdx] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -307,12 +315,12 @@ export default function Transactions() {
   function openDetail(t: TransactionRow, opts?: { expandSplit?: boolean }) {
     setDetail(t);
     setSplitEnabled(Boolean(opts?.expandSplit));
-    setSplitName('');
-    setSplitAmount('');
+    setSplitTotalAmount('');
     setSplitMessage('');
+    setSplitPeople([emptySplitPerson()]);
     setSplitError(null);
-    setSplitShareLink(null);
-    setSplitLinkCopied(false);
+    setSplitShareLinks([]);
+    setSplitCopiedIdx(null);
     setSplitSaving(false);
 
     setDetailPhotoUrl(null);
@@ -346,58 +354,79 @@ export default function Transactions() {
     setDetail(null);
   }
 
+  // ── Split-people helpers (multi-person rebuild, shared math with
+  // components/ExpenseEntryForm.tsx via lib/split-people.ts) ────────────
+  const splitSum = useMemo(() => splitPeopleSum(splitPeople), [splitPeople]);
+  const splitTotalNumeric = Number(splitTotalAmount) || 0;
+  const splitRemaining = Math.round((splitTotalNumeric - splitSum) * 100) / 100;
+
+  function addSplitPerson() {
+    setSplitPeople((prev) => [...prev, emptySplitPerson()]);
+  }
+  function removeSplitPerson(id: string) {
+    setSplitPeople((prev) => (prev.length <= 1 ? prev : prev.filter((p) => p.id !== id)));
+  }
+  function updateSplitPerson(id: string, field: 'name' | 'amount', value: string) {
+    setSplitPeople((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  }
+  function handleSplitEvenly() {
+    setSplitPeople((prev) => splitEvenly(splitTotalNumeric, prev));
+  }
+
   async function saveSplitDebt() {
     if (!detail || !user) return;
-    if (!splitName.trim()) {
+    const validPeople = validSplitPeople(splitPeople);
+    if (validPeople.length === 0) {
       setSplitError(tr('debts.nameError'));
       return;
     }
-    const numericSplit = Number(splitAmount);
-    if (!numericSplit || numericSplit <= 0) {
+    if (splitTotalNumeric <= 0) {
       setSplitError(tr('debts.amountError'));
       return;
     }
-    if (numericSplit > detail.amount) {
+    if (splitTotalNumeric > detail.amount) {
       setSplitError(tr('home.splitTooBig'));
+      return;
+    }
+    if (splitSum > splitTotalNumeric + 0.01) {
+      setSplitError(tr('home.splitOverAllocatedError'));
       return;
     }
 
     setSplitSaving(true);
     setSplitError(null);
-    const { data: debt, error } = await supabase
-      .from('debts')
-      .insert({
-        owner_id: user.id,
-        transaction_id: detail.id,
-        owed_by_name: splitName.trim(),
-        amount: numericSplit,
-        target_account_id: detail.account_id,
-        message: splitMessage.trim() || null,
-      })
-      .select('id, owed_by_name, amount, status, share_token')
-      .single();
+    const { links, error } = await createDebtsForSplit({
+      ownerId: user.id,
+      transactionId: detail.id,
+      targetAccountId: detail.account_id,
+      message: splitMessage.trim() || null,
+      people: validPeople,
+    });
 
-    if (error || !debt) {
-      setSplitError(error?.message ?? tr('common.savingError'));
-      setSplitSaving(false);
-      return;
+    if (links.length > 0) {
+      const { data: freshDebts } = await supabase
+        .from('debts')
+        .select('id, owed_by_name, amount, status, share_token')
+        .eq('transaction_id', detail.id)
+        .order('created_at', { ascending: false });
+      setDetailDebts(freshDebts ?? []);
+      setDebtLinkedIds((prev) => new Set(prev).add(detail.id));
+      setSplitShareLinks(links.map((l) => ({ name: l.name, link: linkForToken(l.token) })));
+      setSplitTotalAmount('');
+      setSplitMessage('');
+      setSplitPeople([emptySplitPerson()]);
     }
-
-    setDetailDebts((prev) => [debt as DetailDebtRow, ...prev]);
-    setDebtLinkedIds((prev) => new Set(prev).add(detail.id));
-    setSplitShareLink(linkForToken(debt.share_token));
-    setSplitName('');
-    setSplitAmount('');
-    setSplitMessage('');
+    if (error) setSplitError(error);
     setSplitSaving(false);
   }
 
-  async function copySplitLink() {
-    if (!splitShareLink) return;
+  async function copySplitLink(idx: number) {
+    const link = splitShareLinks[idx];
+    if (!link) return;
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-      await navigator.clipboard.writeText(splitShareLink);
-      setSplitLinkCopied(true);
-      setTimeout(() => setSplitLinkCopied(false), 1500);
+      await navigator.clipboard.writeText(link.link);
+      setSplitCopiedIdx(idx);
+      setTimeout(() => setSplitCopiedIdx(null), 1500);
     }
   }
 
@@ -804,18 +833,14 @@ export default function Transactions() {
 
                     {splitEnabled && (
                       <View style={[styles.splitPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                        {/* Amount + message on top, people list at the end —
+                            same layout as Record Expense's split panel
+                            (lib/split-people.ts shares the math). */}
                         <TextInput
-                          value={splitName}
-                          onChangeText={setSplitName}
-                          placeholder={tr('home.whoOwesPlaceholder')}
-                          placeholderTextColor={tokens.textMuted}
-                          style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
-                        />
-                        <TextInput
-                          value={splitAmount}
-                          onChangeText={setSplitAmount}
+                          value={splitTotalAmount}
+                          onChangeText={setSplitTotalAmount}
                           keyboardType="numeric"
-                          placeholder={tr('home.howMuchPlaceholder')}
+                          placeholder={tr('home.splitTotalPlaceholder')}
                           placeholderTextColor={tokens.textMuted}
                           style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
                         />
@@ -826,6 +851,66 @@ export default function Transactions() {
                           placeholderTextColor={tokens.textMuted}
                           style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
                         />
+
+                        <View style={styles.splitEvenlyRow}>
+                          <Pressable
+                            onPress={handleSplitEvenly}
+                            disabled={splitTotalNumeric <= 0}
+                            style={[
+                              styles.splitAddPersonBtn,
+                              { backgroundColor: tokens.cardAlt, opacity: splitTotalNumeric > 0 ? 1 : 0.5 },
+                            ]}
+                          >
+                            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                              {tr('home.splitEvenlyBtn')}
+                            </Text>
+                          </Pressable>
+                          <Text
+                            style={{
+                              color: splitRemaining === 0 ? tokens.greenFg : splitRemaining < 0 ? tokens.coral : tokens.textMuted,
+                              fontFamily: fontFamily.semibold,
+                              fontSize: 12.5,
+                            }}
+                          >
+                            {splitSum} / {splitTotalNumeric || 0} {tr('common.czk')}
+                            {splitRemaining > 0 ? ` · ${tr('home.splitStillMissing')} ${splitRemaining}` : ''}
+                            {splitRemaining < 0 ? ` · ${tr('home.splitOverAllocated')} ${Math.abs(splitRemaining)}` : ''}
+                          </Text>
+                        </View>
+
+                        {splitPeople.map((p) => (
+                          <View key={p.id} style={styles.splitPersonRow}>
+                            <TextInput
+                              value={p.name}
+                              onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
+                              placeholder={tr('home.whoOwesPlaceholder')}
+                              placeholderTextColor={tokens.textMuted}
+                              style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border, flex: 2 }]}
+                            />
+                            <TextInput
+                              value={p.amount}
+                              onChangeText={(v) => updateSplitPerson(p.id, 'amount', v)}
+                              keyboardType="numeric"
+                              placeholder={tr('home.howMuchPlaceholder')}
+                              placeholderTextColor={tokens.textMuted}
+                              style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border, flex: 1 }]}
+                            />
+                            {splitPeople.length > 1 && (
+                              <Pressable onPress={() => removeSplitPerson(p.id)} hitSlop={8}>
+                                <Text style={{ color: tokens.coral, fontFamily: fontFamily.bold, fontSize: 16 }}>×</Text>
+                              </Pressable>
+                            )}
+                          </View>
+                        ))}
+                        <Pressable
+                          onPress={addSplitPerson}
+                          style={[styles.splitAddPersonBtn, { backgroundColor: tokens.cardAlt }]}
+                        >
+                          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                            {tr('home.addPersonBtn')}
+                          </Text>
+                        </Pressable>
+
                         <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
                           {tr('home.splitHint')}
                         </Text>
@@ -836,23 +921,33 @@ export default function Transactions() {
                           </Text>
                         )}
 
-                        {splitShareLink && (
+                        {splitShareLinks.length > 0 && (
                           <View style={[styles.shareBox, { backgroundColor: tokens.greenBg }]}>
-                            <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5, marginBottom: 6 }}>
+                            <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                               {tr('home.shareLinkCreated')}
                             </Text>
-                            <Text
-                              selectable
-                              numberOfLines={1}
-                              style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 8 }}
-                            >
-                              {splitShareLink}
-                            </Text>
-                            <Pressable onPress={copySplitLink} style={[styles.copyBtn, { backgroundColor: tokens.card }]}>
-                              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
-                                {splitLinkCopied ? tr('common.copied') : tr('common.copyLink')}
-                              </Text>
-                            </Pressable>
+                            {splitShareLinks.map((link, idx) => (
+                              <View key={link.link} style={styles.shareLinkRow}>
+                                <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                                  {link.name}
+                                </Text>
+                                <Text
+                                  selectable
+                                  numberOfLines={1}
+                                  style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 12 }}
+                                >
+                                  {link.link}
+                                </Text>
+                                <Pressable
+                                  onPress={() => copySplitLink(idx)}
+                                  style={[styles.copyBtn, { backgroundColor: tokens.card }]}
+                                >
+                                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                                    {splitCopiedIdx === idx ? tr('common.copied') : tr('common.copyLink')}
+                                  </Text>
+                                </Pressable>
+                              </View>
+                            ))}
                           </View>
                         )}
 
@@ -975,7 +1070,11 @@ const styles = StyleSheet.create({
   splitToggle: { alignItems: 'center', paddingVertical: 2, marginTop: 18 },
   splitPanel: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 8, marginTop: 8 },
   splitInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
-  shareBox: { borderRadius: 14, padding: 12 },
+  splitPersonRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  splitEvenlyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  splitAddPersonBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
+  shareBox: { borderRadius: 14, padding: 12, gap: 8 },
+  shareLinkRow: { gap: 4 },
   copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
   splitSaveBtn: { paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
 });
