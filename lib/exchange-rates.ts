@@ -81,6 +81,30 @@ export async function getCachedRate(currency: string, date: string): Promise<Res
  * this is deliberately NOT a bulk downloader, per Pavel's "mostly I won't
  * need to download it all" — most calls should just hit the cache, since
  * every transaction saved in a currency also caches that day's rate. */
+/** supabase-js's `error.message` for a non-2xx Edge Function response is
+ * always the generic "Edge Function returned a non-2xx status code" — the
+ * function's own JSON error body (the actually useful part) is only
+ * reachable via `error.context`, a raw Response, on `FunctionsHttpError`.
+ * Falls back to the generic message when there's no readable body (a
+ * network-level FunctionsFetchError/FunctionsRelayError, for instance). */
+async function readFunctionErrorMessage(error: { message: string; context?: unknown }): Promise<string> {
+  const context = error.context as Response | undefined;
+  if (context && typeof context.text === 'function') {
+    try {
+      const bodyText = await context.text();
+      try {
+        const body = JSON.parse(bodyText);
+        if (body?.error) return `${body.error} (status ${context.status})`;
+      } catch {
+        if (bodyText) return `${bodyText.slice(0, 200)} (status ${context.status})`;
+      }
+    } catch {
+      // ignore — fall through to the generic message below
+    }
+  }
+  return error.message;
+}
+
 export async function ensureRate(currency: string, date: string): Promise<{ rate: ResolvedRate | null; error: string | null }> {
   const cached = await getCachedRate(currency, date);
   if (cached) return { rate: cached, error: null };
@@ -88,7 +112,7 @@ export async function ensureRate(currency: string, date: string): Promise<{ rate
   const { data, error } = await supabase.functions.invoke('fetch-exchange-rate', {
     body: { mode: 'lookup', currency: currency.toUpperCase(), date },
   });
-  if (error) return { rate: null, error: error.message };
+  if (error) return { rate: null, error: await readFunctionErrorMessage(error) };
   if (!data || data.error) return { rate: null, error: data?.error ?? 'Unknown error' };
   return {
     rate: { currency: data.currency, resolvedDate: data.resolvedDate, amountUnit: data.amountUnit, rate: data.rate },
@@ -105,7 +129,7 @@ export async function downloadRateRange(
   const { data, error } = await supabase.functions.invoke('fetch-exchange-rate', {
     body: { mode: 'range', fromDate, toDate },
   });
-  if (error) return { error: error.message };
+  if (error) return { error: await readFunctionErrorMessage(error) };
   if (!data || data.error) return { error: data?.error ?? 'Unknown error' };
   return data;
 }

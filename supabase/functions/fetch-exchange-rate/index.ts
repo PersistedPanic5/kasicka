@@ -102,15 +102,67 @@ function shiftDate(dateStr: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ČNB has turned out to be intermittently reachable from Supabase's edge
+// network — an initial burst of requests (e.g. a range backfill) can
+// succeed cleanly, then a request moments later fails, for the same URLs
+// that just worked. That pattern (fine in bursts, flaky right after) reads
+// like basic rate-limiting/bot-protection reacting to a run of requests
+// from the same caller more than a plain network outage — so this fetches
+// gently: a real browser User-Agent (an obviously bot-ish one is an easy
+// thing for a WAF to key on) and a small pause between requests when
+// walking multiple days, rather than firing them back to back.
+//
+// A hung fetch() with no timeout doesn't throw — it just sits until the
+// edge runtime's own wall-clock limit kills the whole isolate, which shows
+// up to the caller as a bare "502 Bad Gateway" with nothing useful in the
+// logs. Bounding every attempt with an AbortController turns that into a
+// normal, loggable, catchable error instead.
+const CNB_FETCH_TIMEOUT_MS = 12000;
+const CNB_REQUEST_SPACING_MS = 300;
+const BROWSER_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchCnbDailyFile(dateStr: string): Promise<ParsedFile | null> {
   const url = `https://www.cnb.cz/en/financial-markets/foreign-exchange-market/central-bank-exchange-rate-fixing/central-bank-exchange-rate-fixing/daily.txt?date=${toCnbDateParam(dateStr)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CNB_FETCH_TIMEOUT_MS);
+  console.log(`[fetch-exchange-rate] requesting ${url}`);
   let res: Response;
   try {
-    res = await fetch(url);
-  } catch {
+    res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': BROWSER_USER_AGENT,
+        'Accept': 'text/plain,*/*',
+        'Accept-Language': 'en-US,en;q=0.9,cs;q=0.8',
+      },
+    });
+  } catch (err) {
+    const isAbort = err instanceof Error && err.name === 'AbortError';
+    console.log(`[fetch-exchange-rate] fetch ${isAbort ? 'timed out' : 'failed'} for ${dateStr}: ${err instanceof Error ? err.message : String(err)}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+  console.log(`[fetch-exchange-rate] response for ${dateStr}: status ${res.status}`);
+  if (!res.ok) {
+    // Log the body on a non-2xx — a WAF/rate-limit block usually says so in
+    // an HTML or JSON body, which is the one piece of evidence that would
+    // actually distinguish "blocked" from "ČNB has nothing for this date"
+    // (a real "no data" response from ČNB is also a non-200, so this isn't
+    // itself an error condition — just worth seeing when it happens).
+    try {
+      const bodyPreview = (await res.text()).slice(0, 300);
+      console.log(`[fetch-exchange-rate] non-2xx body preview for ${dateStr}: ${bodyPreview}`);
+    } catch {
+      // ignore — logging the body is best-effort only
+    }
     return null;
   }
-  if (!res.ok) return null;
   return parseDailyTxt(await res.text());
 }
 
@@ -119,6 +171,20 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: CORS_HEADERS });
   }
 
+  try {
+    return await handleRequest(req);
+  } catch (err) {
+    // Belt-and-braces: turn ANY unexpected throw into a visible JSON 500
+    // instead of letting the runtime produce an opaque 502 with no body.
+    console.log(`[fetch-exchange-rate] unhandled error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`);
+    return new Response(JSON.stringify({ error: 'Internal error', detail: err instanceof Error ? err.message : String(err) }), {
+      status: 500,
+      headers: { ...CORS_HEADERS, 'content-type': 'application/json' },
+    });
+  }
+});
+
+async function handleRequest(req: Request): Promise<Response> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceRoleKey) {
@@ -138,6 +204,7 @@ Deno.serve(async (req) => {
       headers: { ...CORS_HEADERS, 'content-type': 'application/json' },
     });
   }
+  console.log(`[fetch-exchange-rate] mode=${String(body.mode)} body=${JSON.stringify(body)}`);
 
   async function storeRows(rateDate: string, rows: ParsedRow[]) {
     const upserts = rows.map((r) => ({
@@ -161,6 +228,7 @@ Deno.serve(async (req) => {
 
     let cursor = date;
     for (let attempt = 0; attempt < 10; attempt++) {
+      if (attempt > 0) await sleep(CNB_REQUEST_SPACING_MS);
       const parsed = await fetchCnbDailyFile(cursor);
       if (parsed) {
         await storeRows(parsed.headerDate, parsed.rows);
@@ -183,9 +251,14 @@ Deno.serve(async (req) => {
       }
       cursor = shiftDate(cursor, -1);
     }
+    // 404, not 502 — this means "asked ČNB honestly, 10 times, nothing
+    // published in that window," which is a real answer, not a gateway
+    // failure. (A run of literal 502s further up, before this point, is
+    // what actually indicates ČNB/the gateway not responding — see the
+    // per-attempt log lines above for which one it was.)
     return new Response(
       JSON.stringify({ error: `No ČNB fixing found in the 10 days up to ${date}` }),
-      { status: 502, headers: { ...CORS_HEADERS, 'content-type': 'application/json' } }
+      { status: 404, headers: { ...CORS_HEADERS, 'content-type': 'application/json' } }
     );
   }
 
@@ -206,6 +279,7 @@ Deno.serve(async (req) => {
     const currenciesSeen = new Set<string>();
     let cursor = fromDate;
     while (cursor <= toDate && daysRequested < MAX_DAYS) {
+      if (daysRequested > 0) await sleep(CNB_REQUEST_SPACING_MS);
       daysRequested++;
       const parsed = await fetchCnbDailyFile(cursor);
       if (parsed) {
@@ -225,4 +299,4 @@ Deno.serve(async (req) => {
     status: 400,
     headers: { ...CORS_HEADERS, 'content-type': 'application/json' },
   });
-});
+}
