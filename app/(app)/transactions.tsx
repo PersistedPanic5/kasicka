@@ -8,16 +8,26 @@ import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
 import {
-  createDebtsForSplit,
+  createOrMergeDebtsForSplit,
   emptySplitPerson,
   splitEvenly,
   splitPeopleSum,
-  usePastDebtorNames,
+  useDebtHistory,
   validSplitPeople,
+  type OutstandingDebtMatch,
   type SplitPerson,
 } from '@/lib/split-people';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import type { DebtStatus } from '@/types/database';
+
+/** One split person's name matching an existing outstanding debt, offered
+ * for merging at Save time — see the mergeOffer state below and
+ * lib/split-people.ts's createOrMergeDebtsForSplit. */
+interface MergeOfferMatch {
+  name: string;
+  newAmount: number;
+  existing: OutstandingDebtMatch;
+}
 
 type TransactionRow = {
   id: string;
@@ -153,7 +163,11 @@ export default function Transactions() {
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
-  const pastDebtorNames = usePastDebtorNames();
+  const debtHistory = useDebtHistory();
+  // Pavel: "if I select the already existing person - offer me to merge
+  // when confirming" — same offer as ExpenseEntryForm.tsx, here for
+  // splitting off an already-existing transaction.
+  const [mergeOffer, setMergeOffer] = useState<{ matches: MergeOfferMatch[]; chosen: Set<string> } | null>(null);
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [splitShareLinks, setSplitShareLinks] = useState<{ name: string; link: string }[]>([]);
@@ -325,6 +339,7 @@ export default function Transactions() {
     setSplitShareLinks([]);
     setSplitCopiedIdx(null);
     setSplitSaving(false);
+    setMergeOffer(null);
 
     setDetailPhotoUrl(null);
     setDetailPhotoError(null);
@@ -376,7 +391,20 @@ export default function Transactions() {
     setSplitPeople((prev) => splitEvenly(splitTotalNumeric, prev));
   }
 
-  async function saveSplitDebt() {
+  function toggleMergeChoice(key: string) {
+    setMergeOffer((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev.chosen);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return { ...prev, chosen: next };
+    });
+  }
+
+  /** `offer` is only ever passed back in from the merge-offer modal's
+   * "Continue" button below — a plain Save press always calls this with
+   * no argument, so a fresh match-check runs every time. */
+  async function saveSplitDebt(offer?: { matches: MergeOfferMatch[]; chosen: Set<string> }) {
     if (!detail || !user) return;
     const validPeople = validSplitPeople(splitPeople);
     if (validPeople.length === 0) {
@@ -396,15 +424,36 @@ export default function Transactions() {
       return;
     }
 
+    // See components/ExpenseEntryForm.tsx's handleSave for the same check
+    // — pause for confirmation the first time through if any split person
+    // already has an outstanding debt, rather than silently creating
+    // another separate one for them.
+    if (!offer) {
+      const matches = validPeople
+        .map((p): MergeOfferMatch | null => {
+          const existing = debtHistory.outstandingByName.get(p.name.trim().toLowerCase());
+          return existing ? { name: p.name, newAmount: p.amount, existing } : null;
+        })
+        .filter((m): m is MergeOfferMatch => m !== null);
+      if (matches.length > 0) {
+        setMergeOffer({ matches, chosen: new Set(matches.map((m) => m.name.trim().toLowerCase())) });
+        return;
+      }
+    }
+
     setSplitSaving(true);
     setSplitError(null);
-    const { links, error } = await createDebtsForSplit({
+    const { links, error } = await createOrMergeDebtsForSplit({
       ownerId: user.id,
       transactionId: detail.id,
       targetAccountId: detail.account_id,
       message: splitMessage.trim() || null,
       people: validPeople,
+      outstandingByName: debtHistory.outstandingByName,
+      mergeNames: offer?.chosen ?? new Set(),
+      currencyLabel: tr('common.czk'),
     });
+    setMergeOffer(null);
 
     if (links.length > 0) {
       const { data: freshDebts } = await supabase
@@ -886,7 +935,7 @@ export default function Transactions() {
                             <NameAutocompleteInput
                               value={p.name}
                               onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
-                              pastNames={pastDebtorNames}
+                              pastNames={debtHistory.pastNames}
                               placeholder={tr('home.whoOwesPlaceholder')}
                               containerStyle={{ flex: 2 }}
                               inputStyle={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
@@ -956,7 +1005,7 @@ export default function Transactions() {
                         )}
 
                         <Pressable
-                          onPress={saveSplitDebt}
+                          onPress={() => saveSplitDebt()}
                           disabled={splitSaving}
                           style={[styles.splitSaveBtn, { backgroundColor: tokens.accent, opacity: splitSaving ? 0.6 : 1 }]}
                         >
@@ -982,6 +1031,83 @@ export default function Transactions() {
                 </Pressable>
               </ScrollView>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={mergeOffer !== null} transparent animationType="fade" onRequestClose={() => setMergeOffer(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, styles.detailCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
+            <ScrollView>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 10 }}>
+                {tr('debts.mergeOfferTitle')}
+              </Text>
+              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 12 }}>
+                {tr('debts.mergeOfferIntro')}
+              </Text>
+
+              {mergeOffer?.matches.map((m) => {
+                const key = m.name.trim().toLowerCase();
+                const merging = mergeOffer.chosen.has(key);
+                return (
+                  <View key={key} style={[styles.mergeOfferRow, { borderColor: tokens.border, backgroundColor: tokens.card }]}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 14 }}>{m.name}</Text>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                      {m.existing.amount} + {m.newAmount} = {m.existing.amount + m.newAmount} {tr('common.czk')}
+                    </Text>
+                    <View style={styles.mergeChoiceRow}>
+                      <Pressable
+                        onPress={() => toggleMergeChoice(key)}
+                        style={[styles.mergeChoiceBtn, { backgroundColor: merging ? tokens.accent : tokens.cardAlt }]}
+                      >
+                        <Text
+                          style={{
+                            color: merging ? tokens.accentText : tokens.text,
+                            fontFamily: fontFamily.semibold,
+                            fontSize: 12.5,
+                          }}
+                        >
+                          {tr('debts.mergeOfferMerge')}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => toggleMergeChoice(key)}
+                        style={[styles.mergeChoiceBtn, { backgroundColor: !merging ? tokens.accent : tokens.cardAlt }]}
+                      >
+                        <Text
+                          style={{
+                            color: !merging ? tokens.accentText : tokens.text,
+                            fontFamily: fontFamily.semibold,
+                            fontSize: 12.5,
+                          }}
+                        >
+                          {tr('debts.mergeOfferKeepSeparate')}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <View style={styles.modalActions}>
+                <Pressable onPress={() => setMergeOffer(null)} style={[styles.modalBtn, { backgroundColor: tokens.card }]}>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{tr('common.cancel')}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    const offer = mergeOffer;
+                    setMergeOffer(null);
+                    if (offer) saveSplitDebt(offer);
+                  }}
+                  disabled={splitSaving}
+                  style={[styles.modalBtn, { backgroundColor: tokens.accent, opacity: splitSaving ? 0.6 : 1 }]}
+                >
+                  <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                    {tr('debts.mergeOfferContinue')}
+                  </Text>
+                </Pressable>
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1081,4 +1207,7 @@ const styles = StyleSheet.create({
   shareLinkRow: { gap: 4 },
   copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
   splitSaveBtn: { paddingVertical: 13, borderRadius: 12, alignItems: 'center' },
+  mergeOfferRow: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 10, gap: 6 },
+  mergeChoiceRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  mergeChoiceBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
 });

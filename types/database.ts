@@ -186,6 +186,23 @@ export type LongTermItemInsert = Partial<LongTermItem> &
   Pick<LongTermItem, 'owner_id' | 'name' | 'category_id' | 'full_payment_amount' | 'payment_month' | 'first_reserve_month' | 'reserve_amount_mode'>;
 export type LongTermItemUpdate = Partial<LongTermItem>;
 
+/** Snapshot of one debt row folded into a merged debt — enough to
+ * recreate that row exactly if the merge is later undone via "Unmerge" on
+ * the Debts page. See supabase/migrations/0010_debts_unmerge_support.sql
+ * and lib/debt-merge.ts's buildMergedFromSnapshot(). */
+export interface MergedDebtSnapshot {
+  owed_by_name: string;
+  amount: number;
+  message: string | null;
+  transaction_id: string | null;
+  target_account_id: string;
+  /** Set only if this source row was itself already a merged debt at the
+   * time it was folded into the new one — preserves that history so
+   * unmerging, then unmerging again, still recovers every original
+   * rather than losing a level. */
+  merged_from: MergedDebtSnapshot[] | null;
+}
+
 export interface Debt {
   id: string;
   owner_id: string;
@@ -207,6 +224,12 @@ export interface Debt {
   settled_at: string | null;
   settlement_transaction_id: string | null;
   created_at: string;
+  /** Set only on a debt created by "Merge" (Debts page) or the "merge
+   * with an existing outstanding debt" offer at save time — a snapshot of
+   * what was folded in, so "Unmerge" can recreate the originals. Null for
+   * an ordinary, never-merged debt. See supabase/migrations/
+   * 0010_debts_unmerge_support.sql. */
+  merged_from: MergedDebtSnapshot[] | null;
 }
 export type DebtInsert = Partial<Debt> &
   Pick<Debt, 'owner_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;

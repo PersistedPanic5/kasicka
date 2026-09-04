@@ -11,7 +11,7 @@ import { useLanguage } from '@/lib/language-context';
  * "already existing or past debts: Maty" so he can tap it instead of
  * re-typing (and, critically, instead of typing a slightly different
  * spelling that would otherwise fragment one person across several debts
- * — see lib/split-people.ts's usePastDebtorNames doc comment).
+ * — see lib/split-people.ts's useDebtHistory doc comment).
  */
 export function NameAutocompleteInput({
   value,
@@ -25,8 +25,8 @@ export function NameAutocompleteInput({
   value: string;
   onChangeText: (v: string) => void;
   /** Full pool of past debtor names to match against — usually
-   * usePastDebtorNames()'s return value, passed down so the query only
-   * runs once per screen rather than once per split-person row. */
+   * useDebtHistory().pastNames, passed down so the query only runs once
+   * per screen rather than once per split-person row. */
   pastNames: string[];
   placeholder?: string;
   containerStyle?: ViewStyle;

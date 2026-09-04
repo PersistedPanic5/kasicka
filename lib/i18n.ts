@@ -153,6 +153,13 @@ const en = {
     mergeCombining: 'Combining:',
     mergeConfirm: 'Merge',
     merging: 'Merging…',
+    unmergeBtn: 'Unmerge',
+    mergeOfferTitle: 'Merge with existing debt?',
+    mergeOfferIntro:
+      "Some of the people below already have an outstanding debt from before. Merging keeps one link per person instead of several — but any link already sent for the existing debt stops working, since a new link is created for the combined total.",
+    mergeOfferMerge: 'Merge',
+    mergeOfferKeepSeparate: 'Keep separate',
+    mergeOfferContinue: 'Continue and save',
   },
   more: {
     title: 'More',
@@ -475,6 +482,13 @@ const cs: Dict = {
     mergeCombining: 'Slučuji:',
     mergeConfirm: 'Sloučit',
     merging: 'Slučuji…',
+    unmergeBtn: 'Rozdělit zpět',
+    mergeOfferTitle: 'Sloučit s existujícím dluhem?',
+    mergeOfferIntro:
+      'Někdo z níže uvedených už má nesplacený dluh z dřívějška. Sloučením zůstane jeden odkaz na osobu místo několika — ale už odeslaný odkaz k existujícímu dluhu přestane fungovat, protože pro sloučenou částku se vytvoří nový.',
+    mergeOfferMerge: 'Sloučit',
+    mergeOfferKeepSeparate: 'Nechat zvlášť',
+    mergeOfferContinue: 'Pokračovat a uložit',
   },
   more: {
     title: 'Více',

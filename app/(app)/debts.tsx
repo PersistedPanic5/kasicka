@@ -6,8 +6,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
-import { mergeDebtMessages } from '@/lib/debt-merge';
-import type { DebtStatus } from '@/types/database';
+import { buildMergedFromSnapshot, mergeDebtMessages } from '@/lib/debt-merge';
+import type { DebtStatus, MergedDebtSnapshot } from '@/types/database';
 
 type DebtRow = {
   id: string;
@@ -21,6 +21,9 @@ type DebtRow = {
   target_account_id: string;
   message: string | null;
   created_at: string;
+  /** Set only on a debt created by merging others — what "Unmerge" (below)
+   * recreates from. See supabase/migrations/0010_debts_unmerge_support.sql. */
+  merged_from: MergedDebtSnapshot[] | null;
 };
 
 /**
@@ -57,6 +60,7 @@ export default function Debts() {
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [pendingUnmergeId, setPendingUnmergeId] = useState<string | null>(null);
   const [mergeError, setMergeError] = useState<string | null>(null);
 
   const [mergeModalOpen, setMergeModalOpen] = useState(false);
@@ -80,7 +84,9 @@ export default function Debts() {
     setLoading(true);
     const { data } = await supabase
       .from('debts')
-      .select('id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at')
+      .select(
+        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from'
+      )
       .order('created_at', { ascending: false });
     setDebts(data ?? []);
     setLoading(false);
@@ -227,7 +233,12 @@ export default function Debts() {
     const totalAmount = selected.reduce((sum, d) => sum + Number(d.amount), 0);
     setMergeName(selected[0].owed_by_name);
     setMergeAmount(String(totalAmount));
-    setMergeMessage(mergeDebtMessages(selected.map((d) => d.message)));
+    setMergeMessage(
+      mergeDebtMessages(
+        selected.map((d) => ({ message: d.message, amount: Number(d.amount) })),
+        t('common.czk')
+      )
+    );
     setMergeModalError(null);
     setMergeModalOpen(true);
   }
@@ -264,6 +275,19 @@ export default function Debts() {
       amount: numericAmount,
       target_account_id: selected[0]?.target_account_id,
       message: mergeMessage.trim() || null,
+      // Snapshot of exactly what's being folded in, so "Unmerge" can
+      // recreate every original row — see supabase/migrations/
+      // 0010_debts_unmerge_support.sql.
+      merged_from: buildMergedFromSnapshot(
+        selected.map((d) => ({
+          owed_by_name: d.owed_by_name,
+          amount: Number(d.amount),
+          message: d.message,
+          transaction_id: d.transaction_id,
+          target_account_id: d.target_account_id,
+          merged_from: d.merged_from,
+        }))
+      ),
     });
 
     if (insertError) {
@@ -278,6 +302,45 @@ export default function Debts() {
     setMergeModalOpen(false);
     setSelectMode(false);
     setSelectedIds(new Set());
+    load();
+  }
+
+  // Undoes a merge (either the manual one above, or the "merge with
+  // existing debt" offer at save time in ExpenseEntryForm/transactions):
+  // deletes the merged row and recreates every row from its merged_from
+  // snapshot, each getting a fresh id/share_token (the old links are gone
+  // for good — lost the moment the merge deleted their rows — new ones
+  // are created here instead). Restricted to OUTSTANDING merged debts,
+  // same as merging itself, since once claimed/settled the ledger already
+  // reflects the combined total and unmerging would just be confusing.
+  // Two-tap confirm, same pattern as handleDeleteOne below.
+  async function handleUnmerge(debt: DebtRow) {
+    if (!debt.merged_from || debt.merged_from.length === 0 || !user) return;
+    if (pendingUnmergeId !== debt.id) {
+      setPendingUnmergeId(debt.id);
+      setTimeout(() => setPendingUnmergeId((cur) => (cur === debt.id ? null : cur)), 3000);
+      return;
+    }
+    setPendingUnmergeId(null);
+    setBusyId(debt.id);
+
+    const restored = debt.merged_from.map((snap) => ({
+      owner_id: user.id,
+      transaction_id: snap.transaction_id,
+      owed_by_name: snap.owed_by_name,
+      amount: snap.amount,
+      target_account_id: snap.target_account_id,
+      message: snap.message,
+      // Carries forward any nested merge history so a debt that was
+      // itself already a merge, once restored, can be unmerged again too.
+      merged_from: snap.merged_from ?? null,
+    }));
+
+    const { error: insertError } = await supabase.from('debts').insert(restored);
+    if (!insertError) {
+      await supabase.from('debts').delete().eq('id', debt.id);
+    }
+    setBusyId(null);
     load();
   }
 
@@ -409,6 +472,22 @@ export default function Debts() {
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12 }}>
                   {t('debts.confirmSettled')}
+                </Text>
+              </Pressable>
+            )}
+            {debt.merged_from && debt.merged_from.length > 0 && debt.status === 'OUTSTANDING' && (
+              <Pressable
+                onPress={() => handleUnmerge(debt)}
+                style={[styles.smallBtn, { backgroundColor: pendingUnmergeId === debt.id ? tokens.coral : tokens.cardAlt }]}
+              >
+                <Text
+                  style={{
+                    color: pendingUnmergeId === debt.id ? tokens.accentText : tokens.text,
+                    fontFamily: fontFamily.semibold,
+                    fontSize: 12,
+                  }}
+                >
+                  {pendingUnmergeId === debt.id ? t('common.confirmQuestion') : t('debts.unmergeBtn')}
                 </Text>
               </Pressable>
             )}

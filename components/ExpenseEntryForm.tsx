@@ -1,5 +1,5 @@
 import { createElement, useEffect, useMemo, useRef, useState } from 'react';
-import { Image, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { supabase } from '@/lib/supabase';
@@ -9,16 +9,26 @@ import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
 import { ensureRate, toCzk, type ResolvedRate } from '@/lib/exchange-rates';
 import {
-  createDebtsForSplit,
+  createOrMergeDebtsForSplit,
   emptySplitPerson,
   newSplitPersonId,
   splitEvenly,
   splitPeopleSum,
-  usePastDebtorNames,
+  useDebtHistory,
   validSplitPeople,
+  type OutstandingDebtMatch,
   type SplitPerson,
 } from '@/lib/split-people';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
+
+/** One split person's name matching an existing outstanding debt, offered
+ * for merging at Save time — see the mergeOffer state below and
+ * lib/split-people.ts's createOrMergeDebtsForSplit. */
+interface MergeOfferMatch {
+  name: string;
+  newAmount: number;
+  existing: OutstandingDebtMatch;
+}
 
 const WEEKDAY_SHORT_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAY_SHORT_CS = ['Ne', 'Po', 'Út', 'St', 'Čt', 'Pá', 'So'];
@@ -102,7 +112,12 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
-  const pastDebtorNames = usePastDebtorNames();
+  const debtHistory = useDebtHistory();
+  // Pavel: "if I select the already existing person - offer me to merge
+  // when confirming" — set only while the confirmation modal below is
+  // open; `chosen` is the set of (trimmed, lowercased) names currently
+  // opted into merging, defaulting to "merge all" when the offer appears.
+  const [mergeOffer, setMergeOffer] = useState<{ matches: MergeOfferMatch[]; chosen: Set<string> } | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -262,7 +277,20 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setSplitPeople([emptySplitPerson()]);
   }
 
-  async function handleSave() {
+  function toggleMergeChoice(key: string) {
+    setMergeOffer((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev.chosen);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return { ...prev, chosen: next };
+    });
+  }
+
+  /** `offer` is only ever passed back in from the merge-offer modal's
+   * "Continue" button below — a plain Save press always calls this with
+   * no argument, so a fresh match-check runs every time. */
+  async function handleSave(offer?: { matches: MergeOfferMatch[]; chosen: Set<string> }) {
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) return;
 
@@ -298,6 +326,26 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     if (splitting && splitSum > splitTotalNumeric + 0.01) {
       setErrorMsg(t('home.splitOverAllocatedError'));
       return;
+    }
+
+    // Before actually saving anything, check whether any split person
+    // matches someone who already has an outstanding debt — if so, pause
+    // for confirmation instead of silently creating yet another separate
+    // debt/link for them (Pavel's whole complaint: "suddenly I have one
+    // person with like 3 bills"). `offer` is only set when re-entering
+    // from that modal's "Continue", so this never re-prompts for the same
+    // save attempt.
+    if (splitting && !offer) {
+      const matches = validPeople
+        .map((p): MergeOfferMatch | null => {
+          const existing = debtHistory.outstandingByName.get(p.name.trim().toLowerCase());
+          return existing ? { name: p.name, newAmount: p.amount, existing } : null;
+        })
+        .filter((m): m is MergeOfferMatch => m !== null);
+      if (matches.length > 0) {
+        setMergeOffer({ matches, chosen: new Set(matches.map((m) => m.name.trim().toLowerCase())) });
+        return;
+      }
     }
 
     setSaving(true);
@@ -340,13 +388,18 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     if (splitting) {
       // Created one by one (see lib/split-people.ts) — the expense itself
       // is already saved either way, so a partial failure here surfaces an
-      // error without rolling anything back.
-      const { links, error: splitError } = await createDebtsForSplit({
+      // error without rolling anything back. A person opted into merging
+      // (offer?.chosen) folds into their existing outstanding debt instead
+      // of getting a new one — see createOrMergeDebtsForSplit.
+      const { links, error: splitError } = await createOrMergeDebtsForSplit({
         ownerId: user.id,
         transactionId: transaction.id,
         targetAccountId: activeAccountId,
         message: splitMessage.trim() || null,
         people: validPeople,
+        outstandingByName: debtHistory.outstandingByName,
+        mergeNames: offer?.chosen ?? new Set(),
+        currencyLabel: t('common.czk'),
       });
       if (splitError) setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${splitError}`);
       setShareLinks(links.map((l) => ({ name: l.name, link: linkForToken(l.token) })));
@@ -359,6 +412,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setNote('');
     setCurrency('CZK');
     resetSplitState();
+    setMergeOffer(null);
     setCopiedLinkIdx(null);
     setSelectedAccountId(null);
     clearPhoto();
@@ -659,7 +713,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
               <NameAutocompleteInput
                 value={p.name}
                 onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
-                pastNames={pastDebtorNames}
+                pastNames={debtHistory.pastNames}
                 placeholder={t('home.whoOwesPlaceholder')}
                 containerStyle={{ flex: 2 }}
                 inputStyle={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
@@ -723,7 +777,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       )}
 
       <Pressable
-        onPress={handleSave}
+        onPress={() => handleSave()}
         disabled={saving || dataLoading || photoUploading}
         style={[styles.saveBtn, { backgroundColor: tokens.accent, opacity: saving || dataLoading || photoUploading ? 0.6 : 1 }]}
       >
@@ -731,6 +785,83 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
           {savedFlash ? t('home.savedBtn') : t('home.saveBtn')}
         </Text>
       </Pressable>
+
+      <Modal visible={mergeOffer !== null} transparent animationType="fade" onRequestClose={() => setMergeOffer(null)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
+            <ScrollView>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 10 }}>
+                {t('debts.mergeOfferTitle')}
+              </Text>
+              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 12 }}>
+                {t('debts.mergeOfferIntro')}
+              </Text>
+
+              {mergeOffer?.matches.map((m) => {
+                const key = m.name.trim().toLowerCase();
+                const merging = mergeOffer.chosen.has(key);
+                return (
+                  <View key={key} style={[styles.mergeOfferRow, { borderColor: tokens.border, backgroundColor: tokens.card }]}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 14 }}>{m.name}</Text>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                      {m.existing.amount} + {m.newAmount} = {m.existing.amount + m.newAmount} {t('common.czk')}
+                    </Text>
+                    <View style={styles.mergeChoiceRow}>
+                      <Pressable
+                        onPress={() => toggleMergeChoice(key)}
+                        style={[styles.mergeChoiceBtn, { backgroundColor: merging ? tokens.accent : tokens.cardAlt }]}
+                      >
+                        <Text
+                          style={{
+                            color: merging ? tokens.accentText : tokens.text,
+                            fontFamily: fontFamily.semibold,
+                            fontSize: 12.5,
+                          }}
+                        >
+                          {t('debts.mergeOfferMerge')}
+                        </Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => toggleMergeChoice(key)}
+                        style={[styles.mergeChoiceBtn, { backgroundColor: !merging ? tokens.accent : tokens.cardAlt }]}
+                      >
+                        <Text
+                          style={{
+                            color: !merging ? tokens.accentText : tokens.text,
+                            fontFamily: fontFamily.semibold,
+                            fontSize: 12.5,
+                          }}
+                        >
+                          {t('debts.mergeOfferKeepSeparate')}
+                        </Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <View style={styles.modalActions}>
+                <Pressable onPress={() => setMergeOffer(null)} style={[styles.modalBtn, { backgroundColor: tokens.card }]}>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{t('common.cancel')}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => {
+                    const offer = mergeOffer;
+                    setMergeOffer(null);
+                    if (offer) handleSave(offer);
+                  }}
+                  disabled={saving}
+                  style={[styles.modalBtn, { backgroundColor: tokens.accent, opacity: saving ? 0.6 : 1 }]}
+                >
+                  <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                    {t('debts.mergeOfferContinue')}
+                  </Text>
+                </Pressable>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -762,4 +893,24 @@ const styles = StyleSheet.create({
   saveBtn: { paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
   photoBtn: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10 },
   photoPreview: { width: 44, height: 44, borderRadius: 8 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    maxHeight: '85%',
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 20,
+  },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  mergeOfferRow: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 10, gap: 6 },
+  mergeChoiceRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  mergeChoiceBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
 });
