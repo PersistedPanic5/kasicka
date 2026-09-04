@@ -391,12 +391,16 @@ export default function Transactions() {
     setSplitPeople((prev) => splitEvenly(splitTotalNumeric, prev));
   }
 
-  function toggleMergeChoice(key: string) {
+  /** Sets (rather than toggles) one match's merge choice — Pavel: tapping
+   * "Merge" while it's already selected should stay selected, not flip
+   * back to "Keep separate". Each button always sets its own outcome
+   * explicitly instead of both buttons toggling the same boolean. */
+  function setMergeChoice(key: string, shouldMerge: boolean) {
     setMergeOffer((prev) => {
       if (!prev) return prev;
       const next = new Set(prev.chosen);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      if (shouldMerge) next.add(key);
+      else next.delete(key);
       return { ...prev, chosen: next };
     });
   }
@@ -1057,7 +1061,7 @@ export default function Transactions() {
                     </Text>
                     <View style={styles.mergeChoiceRow}>
                       <Pressable
-                        onPress={() => toggleMergeChoice(key)}
+                        onPress={() => setMergeChoice(key, true)}
                         style={[styles.mergeChoiceBtn, { backgroundColor: merging ? tokens.accent : tokens.cardAlt }]}
                       >
                         <Text
@@ -1071,7 +1075,7 @@ export default function Transactions() {
                         </Text>
                       </Pressable>
                       <Pressable
-                        onPress={() => toggleMergeChoice(key)}
+                        onPress={() => setMergeChoice(key, false)}
                         style={[styles.mergeChoiceBtn, { backgroundColor: !merging ? tokens.accent : tokens.cardAlt }]}
                       >
                         <Text
