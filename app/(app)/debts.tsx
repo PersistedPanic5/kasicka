@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
+import { mergeDebtMessages } from '@/lib/debt-merge';
 import type { DebtStatus } from '@/types/database';
 
 type DebtRow = {
@@ -14,7 +15,9 @@ type DebtRow = {
   amount: number;
   status: DebtStatus;
   share_token: string;
-  transaction_id: string;
+  /** Null for a debt created by an earlier merge — see
+   * supabase/migrations/0009_debts_merge_support.sql. */
+  transaction_id: string | null;
   target_account_id: string;
   message: string | null;
   created_at: string;
@@ -54,6 +57,14 @@ export default function Debts() {
   const [bulkConfirm, setBulkConfirm] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [mergeError, setMergeError] = useState<string | null>(null);
+
+  const [mergeModalOpen, setMergeModalOpen] = useState(false);
+  const [mergeName, setMergeName] = useState('');
+  const [mergeAmount, setMergeAmount] = useState('');
+  const [mergeMessage, setMergeMessage] = useState('');
+  const [mergeSaving, setMergeSaving] = useState(false);
+  const [mergeModalError, setMergeModalError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState<DebtRow | null>(null);
   const [editName, setEditName] = useState('');
@@ -122,11 +133,13 @@ export default function Debts() {
     if (!user) return;
     setBusyId(debt.id);
 
-    const { data: original } = await supabase
-      .from('transactions')
-      .select('category_id, account_id')
-      .eq('id', debt.transaction_id)
-      .maybeSingle();
+    // A merged debt has no single originating transaction (it may combine
+    // several, possibly from different categories) — skip the lookup
+    // rather than querying transactions.id = null, which would never
+    // match anything anyway; the credit just lands uncategorized below.
+    const { data: original } = debt.transaction_id
+      ? await supabase.from('transactions').select('category_id, account_id').eq('id', debt.transaction_id).maybeSingle()
+      : { data: null };
 
     const today = new Date().toISOString().slice(0, 10);
     const { data: credit, error: creditError } = await supabase
@@ -164,6 +177,7 @@ export default function Debts() {
     setSelectMode((v) => !v);
     setSelectedIds(new Set());
     setBulkConfirm(false);
+    setMergeError(null);
   }
 
   function toggleSelected(id: string) {
@@ -174,6 +188,7 @@ export default function Debts() {
       return next;
     });
     setBulkConfirm(false);
+    setMergeError(null);
   }
 
   async function handleBulkDelete() {
@@ -187,6 +202,80 @@ export default function Debts() {
     await supabase.from('debts').delete().in('id', Array.from(selectedIds));
     setBulkBusy(false);
     setBulkConfirm(false);
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    load();
+  }
+
+  // Deliberately allows selecting debts with different (even misspelled)
+  // owed_by_name values to merge — that's the actual point ("Maty" /
+  // "maty" / "Matty" fragmenting one person across several debts). The
+  // name field below defaults to the most recently created selection but
+  // is editable, since only Pavel knows which spelling — or a different
+  // one entirely — is the one to keep going forward.
+  function openMergeModal() {
+    const selected = debts.filter((d) => selectedIds.has(d.id));
+    setMergeError(null);
+    if (selected.length < 2) {
+      setMergeError(t('debts.mergeNeedTwo'));
+      return;
+    }
+    if (selected.some((d) => d.status !== 'OUTSTANDING')) {
+      setMergeError(t('debts.mergeOnlyOutstanding'));
+      return;
+    }
+    const totalAmount = selected.reduce((sum, d) => sum + Number(d.amount), 0);
+    setMergeName(selected[0].owed_by_name);
+    setMergeAmount(String(totalAmount));
+    setMergeMessage(mergeDebtMessages(selected.map((d) => d.message)));
+    setMergeModalError(null);
+    setMergeModalOpen(true);
+  }
+
+  function closeMergeModal() {
+    setMergeModalOpen(false);
+    setMergeSaving(false);
+    setMergeModalError(null);
+  }
+
+  async function confirmMerge() {
+    if (!user) return;
+    const selected = debts.filter((d) => selectedIds.has(d.id));
+    const numericAmount = Number(mergeAmount);
+    if (!numericAmount || numericAmount <= 0) {
+      setMergeModalError(t('debts.amountError'));
+      return;
+    }
+    if (!mergeName.trim()) {
+      setMergeModalError(t('debts.nameError'));
+      return;
+    }
+    setMergeSaving(true);
+    setMergeModalError(null);
+
+    // No transaction_id — a merged debt may combine debts from different
+    // original transactions/categories, so it deliberately points at none
+    // of them rather than misattributing the total (see migration 0009 and
+    // confirmSettled's null-guard above).
+    const { error: insertError } = await supabase.from('debts').insert({
+      owner_id: user.id,
+      transaction_id: null,
+      owed_by_name: mergeName.trim(),
+      amount: numericAmount,
+      target_account_id: selected[0]?.target_account_id,
+      message: mergeMessage.trim() || null,
+    });
+
+    if (insertError) {
+      setMergeModalError(insertError.message);
+      setMergeSaving(false);
+      return;
+    }
+
+    await supabase.from('debts').delete().in('id', selected.map((d) => d.id));
+
+    setMergeSaving(false);
+    setMergeModalOpen(false);
     setSelectMode(false);
     setSelectedIds(new Set());
     load();
@@ -436,32 +525,54 @@ export default function Debts() {
 
       {selectMode && (
         <View style={[styles.bulkBar, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
-            {selectedIds.size === 0 ? t('debts.tapToSelect') : `${selectedIds.size} ${t('transactions.selected')}`}
-          </Text>
-          <Pressable
-            onPress={handleBulkDelete}
-            disabled={selectedIds.size === 0 || bulkBusy}
-            style={[
-              styles.bulkDeleteBtn,
-              {
-                backgroundColor: bulkConfirm ? tokens.coral : tokens.cardAlt,
-                opacity: selectedIds.size === 0 ? 0.5 : 1,
-              },
-            ]}
+          <Text
+            style={{
+              color: mergeError ? tokens.coral : tokens.textMuted,
+              fontFamily: fontFamily.medium,
+              fontSize: 12.5,
+              flexShrink: 1,
+            }}
           >
-            <Text
-              style={{
-                color: bulkConfirm ? tokens.accentText : tokens.coral,
-                fontFamily: fontFamily.bold,
-                fontSize: 13,
-              }}
+            {mergeError
+              ? mergeError
+              : selectedIds.size === 0
+              ? t('debts.tapToSelect')
+              : `${selectedIds.size} ${t('transactions.selected')}`}
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable
+              onPress={openMergeModal}
+              disabled={selectedIds.size < 2}
+              style={[styles.bulkDeleteBtn, { backgroundColor: tokens.cardAlt, opacity: selectedIds.size < 2 ? 0.5 : 1 }]}
             >
-              {bulkConfirm
-                ? `${t('transactions.confirmDelete')} (${selectedIds.size})?`
-                : `${t('common.delete')}${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
-            </Text>
-          </Pressable>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>
+                {t('debts.mergeBtn')}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleBulkDelete}
+              disabled={selectedIds.size === 0 || bulkBusy}
+              style={[
+                styles.bulkDeleteBtn,
+                {
+                  backgroundColor: bulkConfirm ? tokens.coral : tokens.cardAlt,
+                  opacity: selectedIds.size === 0 ? 0.5 : 1,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: bulkConfirm ? tokens.accentText : tokens.coral,
+                  fontFamily: fontFamily.bold,
+                  fontSize: 13,
+                }}
+              >
+                {bulkConfirm
+                  ? `${t('transactions.confirmDelete')} (${selectedIds.size})?`
+                  : `${t('common.delete')}${selectedIds.size ? ` (${selectedIds.size})` : ''}`}
+              </Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -522,6 +633,84 @@ export default function Debts() {
                 </Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={mergeModalOpen} transparent animationType="fade" onRequestClose={closeMergeModal}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
+          <ScrollView>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 10 }}>
+              {t('debts.mergeTitle')}
+            </Text>
+
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 10 }}>
+              {t('debts.mergeIntro')}
+            </Text>
+
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 11.5, marginBottom: 4 }}>
+              {t('debts.mergeCombining')}
+            </Text>
+            {debts
+              .filter((d) => selectedIds.has(d.id))
+              .map((d) => (
+                <Text key={d.id} style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 12.5, marginBottom: 2 }}>
+                  {d.owed_by_name} — {d.amount} {t('common.czk')}
+                </Text>
+              ))}
+
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 14, marginBottom: 6 }}>
+              {t('debts.whoOwesLabel')}
+            </Text>
+            <TextInput
+              value={mergeName}
+              onChangeText={setMergeName}
+              style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
+            />
+
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
+              {t('debts.amountLabel')}
+            </Text>
+            <TextInput
+              value={mergeAmount}
+              onChangeText={setMergeAmount}
+              keyboardType="numeric"
+              style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
+            />
+
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
+              {t('debts.messageLabel')}
+            </Text>
+            <TextInput
+              value={mergeMessage}
+              onChangeText={setMergeMessage}
+              placeholder={t('common.optional')}
+              placeholderTextColor={tokens.textMuted}
+              style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
+            />
+
+            {mergeModalError && (
+              <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12.5, marginTop: 12 }}>
+                {mergeModalError}
+              </Text>
+            )}
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={closeMergeModal} style={[styles.modalBtn, { backgroundColor: tokens.card }]}>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{t('common.cancel')}</Text>
+              </Pressable>
+              <Pressable
+                onPress={confirmMerge}
+                disabled={mergeSaving}
+                style={[styles.modalBtn, { backgroundColor: tokens.accent, opacity: mergeSaving ? 0.6 : 1 }]}
+              >
+                <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
+                  {mergeSaving ? t('debts.merging') : t('debts.mergeConfirm')}
+                </Text>
+              </Pressable>
+            </View>
+          </ScrollView>
           </View>
         </View>
       </Modal>
@@ -589,6 +778,7 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 420,
+    maxHeight: '85%',
     borderRadius: 18,
     borderWidth: 1,
     padding: 20,

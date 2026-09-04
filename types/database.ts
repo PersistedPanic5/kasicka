@@ -189,7 +189,11 @@ export type LongTermItemUpdate = Partial<LongTermItem>;
 export interface Debt {
   id: string;
   owner_id: string;
-  transaction_id: string;
+  /** Null for a debt created by merging others (supabase/migrations/
+   * 0009_debts_merge_support.sql) — it may combine debts from different
+   * original transactions/categories, so it deliberately doesn't point at
+   * any single one of them rather than misattributing the total. */
+  transaction_id: string | null;
   owed_by_name: string;
   amount: number;
   target_account_id: string;
@@ -205,7 +209,7 @@ export interface Debt {
   created_at: string;
 }
 export type DebtInsert = Partial<Debt> &
-  Pick<Debt, 'owner_id' | 'transaction_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;
+  Pick<Debt, 'owner_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;
 export type DebtUpdate = Partial<Debt>;
 
 /** A browser/device that has granted Web Push permission — see

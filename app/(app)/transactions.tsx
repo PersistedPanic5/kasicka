@@ -12,9 +12,11 @@ import {
   emptySplitPerson,
   splitEvenly,
   splitPeopleSum,
+  usePastDebtorNames,
   validSplitPeople,
   type SplitPerson,
 } from '@/lib/split-people';
+import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import type { DebtStatus } from '@/types/database';
 
 type TransactionRow = {
@@ -151,6 +153,7 @@ export default function Transactions() {
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
+  const pastDebtorNames = usePastDebtorNames();
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [splitShareLinks, setSplitShareLinks] = useState<{ name: string; link: string }[]>([]);
@@ -880,12 +883,13 @@ export default function Transactions() {
 
                         {splitPeople.map((p) => (
                           <View key={p.id} style={styles.splitPersonRow}>
-                            <TextInput
+                            <NameAutocompleteInput
                               value={p.name}
                               onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
+                              pastNames={pastDebtorNames}
                               placeholder={tr('home.whoOwesPlaceholder')}
-                              placeholderTextColor={tokens.textMuted}
-                              style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border, flex: 2 }]}
+                              containerStyle={{ flex: 2 }}
+                              inputStyle={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
                             />
                             <TextInput
                               value={p.amount}

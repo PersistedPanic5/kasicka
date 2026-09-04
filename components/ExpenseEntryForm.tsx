@@ -14,9 +14,11 @@ import {
   newSplitPersonId,
   splitEvenly,
   splitPeopleSum,
+  usePastDebtorNames,
   validSplitPeople,
   type SplitPerson,
 } from '@/lib/split-people';
+import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 
 const WEEKDAY_SHORT_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const WEEKDAY_SHORT_CS = ['Ne', 'Po', 'Út', 'St', 'Čt', 'Pá', 'So'];
@@ -100,6 +102,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
+  const pastDebtorNames = usePastDebtorNames();
 
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -653,12 +656,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
           {splitPeople.map((p) => (
             <View key={p.id} style={styles.splitPersonRow}>
-              <TextInput
+              <NameAutocompleteInput
                 value={p.name}
                 onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
+                pastNames={pastDebtorNames}
                 placeholder={t('home.whoOwesPlaceholder')}
-                placeholderTextColor={tokens.textMuted}
-                style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border, flex: 2 }]}
+                containerStyle={{ flex: 2 }}
+                inputStyle={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
               />
               <TextInput
                 value={p.amount}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 /**
@@ -104,4 +105,46 @@ export async function createDebtsForSplit(params: {
   }
 
   return { links, error: failures.length > 0 ? failures.join('; ') : null };
+}
+
+/** Distinct names pulled from Pavel's own debt history, most-recent-first
+ * — feeds the split-person name field's autocomplete (Pavel: typing "Ma"
+ * should be able to propose "Maty" from a past debt) in both
+ * components/ExpenseEntryForm.tsx and app/(app)/transactions.tsx. The
+ * point is reducing the "Maty" / "maty" / "Matty" drift that was
+ * fragmenting one person across several differently-spelled debts, so this
+ * intentionally does NOT dedupe by a fuzzy/normalized key — it returns the
+ * exact strings Pavel has actually typed before, so picking one from the
+ * list is what keeps future entries consistent with past ones. Capped at a
+ * generous 500 most-recent debt rows before de-duplicating, which comfortably
+ * covers a personal ledger's history without an unbounded query. */
+export function usePastDebtorNames(): string[] {
+  const [names, setNames] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from('debts')
+      .select('owed_by_name, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500)
+      .then(({ data }) => {
+        if (cancelled || !data) return;
+        const seen = new Set<string>();
+        const unique: string[] = [];
+        for (const row of data) {
+          const trimmed = row.owed_by_name.trim();
+          const key = trimmed.toLowerCase();
+          if (!trimmed || seen.has(key)) continue;
+          seen.add(key);
+          unique.push(trimmed);
+        }
+        setNames(unique);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return names;
 }
