@@ -3,7 +3,7 @@
 The Phase 2 "notifications foundation" daily job (`build-roadmap-v1.md`
 Phase 2). Checks every active recurring item; for anything due and not yet
 confirmed this cycle, sends a Web Push notification to every device you've
-subscribed from (More → Profile & preferences → Notifications). It never
+subscribed from (Settings → Profile & preferences → Notifications). It never
 posts a transaction itself — see the comment at the top of `index.ts`.
 
 This is genuinely new infrastructure (a scheduled Edge Function + Web Push),
@@ -68,10 +68,15 @@ From the repo root:
 supabase functions deploy check-recurring-due
 ```
 
-You can test it immediately with:
+You can test it immediately with a plain HTTP call (newer Supabase CLI
+versions dropped `functions invoke` — it now only does `list / delete /
+download / deploy / new / serve`):
 
-```
-supabase functions invoke check-recurring-due
+```powershell
+$url = "https://<your-project-ref>.supabase.co/functions/v1/check-recurring-due"
+$anonKey = "<your EXPO_PUBLIC_SUPABASE_ANON_KEY>"
+
+Invoke-RestMethod -Uri $url -Method Post -Headers @{ Authorization = "Bearer $anonKey" }
 ```
 
 — it'll report `{"checked":N,"due":0,"notified":0}` if nothing's due yet,
