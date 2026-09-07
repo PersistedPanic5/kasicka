@@ -18,5 +18,10 @@ export default function DesktopHome() {
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, alignItems: 'flex-start' },
+  // Was 'flex-start' — with no width cap anywhere above this, the card sat
+  // pinned to the top-left corner on a wide desktop window instead of
+  // reading as a centered page (Pavel's report). (app)/_layout.tsx now caps
+  // the whole content column's width; centering here places the card in
+  // the middle of that column instead of hugging its left edge.
+  wrap: { flex: 1, alignItems: 'center' },
 });

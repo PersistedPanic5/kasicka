@@ -18,6 +18,7 @@ import {
   type SplitPerson,
 } from '@/lib/split-people';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
+import { categoryColor } from '@/lib/identity';
 import type { DebtStatus } from '@/types/database';
 
 /** One split person's name matching an existing outstanding debt, offered
@@ -236,7 +237,10 @@ export default function Transactions() {
     { key: 'INCOME', label: tr('transactions.typeIncome') },
     { key: 'OTHER', label: tr('transactions.filterOther') },
   ];
-  const categoryFilters = [{ id: 'ALL', name: tr('transactions.filterAll') }, ...categories.map((c) => ({ id: c.id, name: c.name }))];
+  const categoryFilters = [
+    { id: 'ALL', name: tr('transactions.filterAll'), colorIndex: -1 },
+    ...categories.map((c, i) => ({ id: c.id, name: c.name, colorIndex: i })),
+  ];
 
   function toggleSelectMode() {
     setSelectMode((v) => !v);
@@ -552,6 +556,9 @@ export default function Transactions() {
                 onPress={() => setCategoryFilter(c.id)}
                 style={[styles.filterChip, { backgroundColor: active ? tokens.accent : tokens.card }]}
               >
+                {!active && c.colorIndex >= 0 && (
+                  <View style={[styles.categoryDot, { backgroundColor: categoryColor(c.colorIndex, tokens) }]} />
+                )}
                 <Text style={{ color: active ? tokens.accentText : tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                   {c.name}
                 </Text>
@@ -623,6 +630,7 @@ export default function Transactions() {
                     color: isCredit(t.type) ? tokens.greenFg : tokens.text,
                     fontFamily: fontFamily.bold,
                     fontSize: 15,
+                    fontVariant: ['tabular-nums'],
                   }}
                 >
                   {isCredit(t.type) ? '+' : '−'}
@@ -744,7 +752,7 @@ export default function Transactions() {
                   {tr('transactions.categoryLabel')}
                 </Text>
                 <View style={styles.chipRow}>
-                  {categories.map((cat) => {
+                  {categories.map((cat, i) => {
                     const active = editCategoryId === cat.id;
                     return (
                       <Pressable
@@ -752,6 +760,9 @@ export default function Transactions() {
                         onPress={() => setEditCategoryId(cat.id)}
                         style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card }]}
                       >
+                        {!active && (
+                          <View style={[styles.categoryDot, { backgroundColor: categoryColor(i, tokens) }]} />
+                        )}
                         <Text
                           style={{
                             color: active ? tokens.accentText : tokens.text,
@@ -812,6 +823,7 @@ export default function Transactions() {
                     fontFamily: fontFamily.regular,
                     fontSize: 34,
                     marginTop: 6,
+                    fontVariant: ['tabular-nums'],
                   }}
                 >
                   {isCredit(detail.type) ? '+' : '−'}
@@ -1137,12 +1149,20 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, paddingVertical: 10, fontSize: 14 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  filterChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 10 },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
+  categoryDot: { width: 7, height: 7, borderRadius: 4 },
   // Cards, not flat bordered rows — see the file doc comment on why this
   // moved to match Debts' card/cardTop/cardActions layout.
   card: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 18,
     padding: 14,
     marginBottom: 8,
     gap: 10,
@@ -1158,7 +1178,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  smallBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
+  smallBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 11 },
   bulkBar: {
     position: 'absolute',
     left: 0,
@@ -1198,7 +1218,14 @@ const styles = StyleSheet.create({
   },
   modalInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+  },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
   modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
   splitToggle: { alignItems: 'center', paddingVertical: 2, marginTop: 18 },

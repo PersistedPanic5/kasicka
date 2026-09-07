@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
 import { buildMergedFromSnapshot, mergeDebtMessages } from '@/lib/debt-merge';
+import { identityColorFor, withAlpha } from '@/lib/identity';
 import type { DebtStatus, MergedDebtSnapshot } from '@/types/database';
 
 type DebtRow = {
@@ -419,6 +420,11 @@ export default function Debts() {
 
   function DebtCard({ debt, action }: { debt: DebtRow; action?: 'settle' }) {
     const selected = selectedIds.has(debt.id);
+    // Design refresh (2026-09): a per-person tint derived from their name
+    // (see lib/identity.ts) so different debtors are distinguishable at a
+    // glance instead of every row looking identical until you read the
+    // name — there was no avatar/initial at all here before.
+    const identity = identityColorFor(debt.owed_by_name, tokens);
     return (
       <Pressable
         key={debt.id}
@@ -440,9 +446,23 @@ export default function Debts() {
             </View>
           )}
 
+          <View style={[styles.avatar, { backgroundColor: withAlpha(identity, 0.16) }]}>
+            <Text style={{ color: identity, fontFamily: fontFamily.extrabold, fontSize: 14 }}>
+              {debt.owed_by_name.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15 }}>{debt.owed_by_name}</Text>
-            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, marginTop: 2 }}>
+            <Text
+              style={{
+                color: tokens.textMuted,
+                fontFamily: fontFamily.medium,
+                fontSize: 12.5,
+                marginTop: 2,
+                fontVariant: ['tabular-nums'],
+              }}
+            >
               {debt.amount} CZK
             </Text>
           </View>
@@ -468,7 +488,11 @@ export default function Debts() {
               <Pressable
                 onPress={() => confirmSettled(debt)}
                 disabled={busyId === debt.id}
-                style={[styles.smallBtn, { backgroundColor: tokens.accent, opacity: busyId === debt.id ? 0.6 : 1 }]}
+                style={[
+                  styles.smallBtn,
+                  { backgroundColor: tokens.accent, opacity: busyId === debt.id ? 0.6 : 1, shadowColor: tokens.accent },
+                  styles.smallBtnPrimary,
+                ]}
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12 }}>
                   {t('debts.confirmSettled')}
@@ -806,7 +830,7 @@ const styles = StyleSheet.create({
   },
   section: { marginBottom: 28 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
-  filterChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 10 },
+  filterChip: { paddingHorizontal: 13, paddingVertical: 8, borderRadius: 12 },
   // A card used to be one row (name+amount, then action buttons trailing
   // to the right) — with `justifyContent: 'space-between'` and no wrap,
   // the buttons row never actually shrank (React Native's default
@@ -818,12 +842,13 @@ const styles = StyleSheet.create({
   // language or button count, rather than patching widths per language.
   card: {
     borderWidth: 1,
-    borderRadius: 14,
+    borderRadius: 18,
     padding: 14,
     marginBottom: 8,
     gap: 10,
   },
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  avatar: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   checkbox: {
     width: 20,
     height: 20,
@@ -833,7 +858,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   cardActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
-  smallBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9 },
+  smallBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 11 },
+  smallBtnPrimary: { shadowOpacity: 0.3, shadowRadius: 10, shadowOffset: { width: 0, height: 5 }, elevation: 3 },
   bulkBar: {
     position: 'absolute',
     left: 0,
@@ -846,7 +872,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderTopWidth: 1,
   },
-  bulkDeleteBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10 },
+  bulkDeleteBtn: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -858,11 +884,11 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     maxHeight: '85%',
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
     padding: 20,
   },
-  modalInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  modalInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
 });

@@ -8,7 +8,18 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "plugins": ["expo-router"],
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Kasička needs camera access to take a photo of a receipt.",
+          "photosPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      "expo-notifications"
+    ],
     "experiments": {
       "typedRoutes": true
     },

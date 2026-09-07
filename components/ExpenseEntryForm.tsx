@@ -7,6 +7,8 @@ import { useAuth } from '@/lib/auth-context';
 import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
+import { categoryColor } from '@/lib/identity';
+import { LogoMark } from '@/components/Logo';
 import { ensureRate, toCzk, type ResolvedRate } from '@/lib/exchange-rates';
 import {
   createOrMergeDebtsForSplit,
@@ -476,15 +478,31 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         </Pressable>
       </View>
 
-      <View style={styles.amountRow}>
-        <TextInput
-          value={amount}
-          onChangeText={setAmount}
-          keyboardType="numeric"
-          placeholder="0"
-          placeholderTextColor={tokens.textMuted}
-          style={[styles.amountInput, { color: tokens.text, minWidth: Math.max(60, amount.length * 30) }]}
-        />
+      {/* Faint piggy-bank watermark behind the amount — design refresh
+          (2026-09): reinforces the Kasička mark at the one moment this
+          screen is most "yours" without competing with the actual number,
+          which still sits on the plain background in front of it. Holes
+          drawn in the same color as the body so at this opacity they read
+          as part of one flat silhouette rather than distracting cutouts.
+          Wrapped with the amount row (not the whole form) and absolutely
+          filled + centered within just that wrapper, so it sits right
+          behind the number regardless of how tall the rest of the form is. */}
+      <View style={styles.amountWrap}>
+        <View style={styles.watermarkWrap} pointerEvents="none">
+          <LogoMark size={132} color={tokens.text} holeColor={tokens.text} />
+        </View>
+        <View style={styles.amountRow}>
+          <TextInput
+            value={amount}
+            onChangeText={setAmount}
+            keyboardType="numeric"
+            placeholder="0"
+            placeholderTextColor={tokens.textMuted}
+            style={[
+              styles.amountInput,
+              { color: tokens.text, minWidth: Math.max(60, amount.length * 30), fontVariant: ['tabular-nums'] },
+            ]}
+          />
         {/* Tap cycles CZK → each active currency → back to CZK (Pavel's
             answer: CZK is part of the cycle, one control does everything).
             Styled as a continuation of the number ("1000 CZK") rather than
@@ -499,6 +517,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             </Text>
           </Pressable>
         )}
+        </View>
       </View>
 
       {currency !== 'CZK' && (
@@ -546,7 +565,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
               {dataLoading ? t('home.settingUpCategories') : t('home.noCategoriesYet')}
             </Text>
           ) : (
-            categories.map((cat) => {
+            categories.map((cat, index) => {
               const active = activeCategoryId === cat.id;
               return (
                 <Pressable
@@ -554,6 +573,15 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
                   onPress={() => setCategoryId(cat.id)}
                   style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card }]}
                 >
+                  {/* Identity dot, hidden once selected (the solid accent
+                      fill already carries "selected") — design refresh
+                      (2026-09): wires up tokens.category, a 6-hue palette
+                      that was defined but never actually used anywhere,
+                      so categories are distinguishable at a glance instead
+                      of every chip looking the same until tapped. */}
+                  {!active && (
+                    <View style={[styles.categoryDot, { backgroundColor: categoryColor(index, tokens) }]} />
+                  )}
                   <Text
                     style={{
                       color: active ? tokens.accentText : tokens.text,
@@ -783,7 +811,14 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       <Pressable
         onPress={() => handleSave()}
         disabled={saving || dataLoading || photoUploading}
-        style={[styles.saveBtn, { backgroundColor: tokens.accent, opacity: saving || dataLoading || photoUploading ? 0.6 : 1 }]}
+        style={[
+          styles.saveBtn,
+          {
+            backgroundColor: tokens.accent,
+            opacity: saving || dataLoading || photoUploading ? 0.6 : 1,
+            shadowColor: tokens.accent,
+          },
+        ]}
       >
         <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
           {savedFlash ? t('home.savedBtn') : t('home.saveBtn')}
@@ -873,30 +908,50 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 const styles = StyleSheet.create({
   container: { width: '100%', maxWidth: 390, gap: 16 },
   containerDesktop: { maxWidth: 460 },
-  typeToggle: { flexDirection: 'row', borderRadius: 12, padding: 3, alignSelf: 'center' },
-  typeToggleBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 9 },
+  typeToggle: { flexDirection: 'row', borderRadius: 14, padding: 3, alignSelf: 'center' },
+  typeToggleBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 11 },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 10, justifyContent: 'center' },
-  dateShiftBtn: { width: 30, height: 30, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  dateShiftBtn: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  amountWrap: { position: 'relative' },
+  watermarkWrap: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    opacity: 0.06,
+  },
   amountRow: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 2 },
   amountInput: { fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
   currencySuffix: { paddingHorizontal: 4, paddingBottom: 12 },
   czkEquivalent: { textAlign: 'center', fontSize: 13, fontFamily: fontFamily.medium, marginTop: -8 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   quickAmountsHint: { textAlign: 'center', fontSize: 11, fontFamily: fontFamily.medium, marginTop: -4 },
-  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 },
-  noteInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },
+  categoryDot: { width: 7, height: 7, borderRadius: 4 },
+  noteInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   splitToggle: { alignItems: 'center', paddingVertical: 2 },
-  splitPanel: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 8 },
-  splitInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+  splitPanel: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 8 },
+  splitInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   splitPersonRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   splitEvenlyRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
-  splitAddPersonBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
-  shareBox: { borderRadius: 14, padding: 12, gap: 8 },
+  splitAddPersonBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 11 },
+  shareBox: { borderRadius: 16, padding: 12, gap: 8 },
   shareLinkRow: { gap: 4 },
-  copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9 },
-  saveBtn: { paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
-  photoBtn: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 10 },
-  photoPreview: { width: 44, height: 44, borderRadius: 8 },
+  copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 11 },
+  saveBtn: {
+    paddingVertical: 16,
+    borderRadius: 19,
+    alignItems: 'center',
+    shadowOpacity: 0.28,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  photoBtn: { alignSelf: 'flex-start', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 },
+  photoPreview: { width: 44, height: 44, borderRadius: 10 },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -908,13 +963,13 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: 420,
     maxHeight: '85%',
-    borderRadius: 18,
+    borderRadius: 20,
     borderWidth: 1,
     padding: 20,
   },
   modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
-  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
-  mergeOfferRow: { borderWidth: 1, borderRadius: 12, padding: 12, marginBottom: 10, gap: 6 },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  mergeOfferRow: { borderWidth: 1, borderRadius: 14, padding: 12, marginBottom: 10, gap: 6 },
   mergeChoiceRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
-  mergeChoiceBtn: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+  mergeChoiceBtn: { flex: 1, paddingVertical: 8, borderRadius: 11, alignItems: 'center' },
 });

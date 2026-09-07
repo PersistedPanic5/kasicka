@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
 import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
+import { categoryColor } from '@/lib/identity';
 import type { Category } from '@/types/database';
 
 type CategoryRow = Pick<Category, 'id' | 'name' | 'default_monthly_budget'>;
@@ -214,7 +215,9 @@ export default function Overview() {
               <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
                 {t('overview.income')}
               </Text>
-              <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 20, marginTop: 4 }}>
+              <Text
+                style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 20, marginTop: 4, fontVariant: ['tabular-nums'] }}
+              >
                 +{totalIncome} {t('common.czk')}
               </Text>
             </View>
@@ -222,12 +225,24 @@ export default function Overview() {
               <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
                 {t('overview.spent')}
               </Text>
-              <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 20, marginTop: 4 }}>
+              <Text
+                style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 20, marginTop: 4, fontVariant: ['tabular-nums'] }}
+              >
                 −{totalSpent} {t('common.czk')}
               </Text>
             </View>
-            <View style={[styles.statCard, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
-              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+            {/* The one "hero" card — accent border + soft shadow — design
+                refresh (2026-09): previously identical to the other two,
+                so nothing signaled this was the number that actually
+                matters most. */}
+            <View
+              style={[
+                styles.statCard,
+                styles.statCardHero,
+                { backgroundColor: tokens.cardAlt, borderColor: tokens.accentBorder, shadowColor: tokens.accent },
+              ]}
+            >
+              <Text style={{ color: tokens.accent, fontFamily: fontFamily.medium, fontSize: 12 }}>
                 {t('overview.net')}
               </Text>
               <Text
@@ -236,6 +251,7 @@ export default function Overview() {
                   fontFamily: fontFamily.bold,
                   fontSize: 20,
                   marginTop: 4,
+                  fontVariant: ['tabular-nums'],
                 }}
               >
                 {net >= 0 ? '+' : ''}
@@ -277,7 +293,7 @@ export default function Overview() {
                 )}
               </View>
 
-              {categories.map((cat) => {
+              {categories.map((cat, index) => {
                 const planned = plannedFor(cat);
                 const actual = actualByCategory[cat.id] ?? 0;
                 const pct = planned > 0 ? Math.min(actual / planned, 1) : actual > 0 ? 1 : 0;
@@ -287,7 +303,17 @@ export default function Overview() {
                 return (
                   <View key={cat.id} style={styles.budgetRow}>
                     <View style={styles.budgetRowTop}>
-                      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{cat.name}</Text>
+                      <View style={styles.budgetRowName}>
+                        {/* Category identity color — design refresh
+                            (2026-09): wires up tokens.category (defined,
+                            never used before) so categories are
+                            distinguishable at a glance. This is deliberately
+                            separate from the bar's over/under-budget color
+                            below it — before this change the same square
+                            carried both meanings at once. */}
+                        <View style={[styles.categorySwatch, { backgroundColor: categoryColor(index, tokens) }]} />
+                        <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{cat.name}</Text>
+                      </View>
                       {editingAll ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                           <TextInput
@@ -301,7 +327,7 @@ export default function Overview() {
                           </Text>
                         </View>
                       ) : (
-                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, fontVariant: ['tabular-nums'] }}>
                           {actual} / {planned} {t('common.czk')}
                           {totalPlanned > 0 && (
                             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
@@ -342,14 +368,17 @@ export default function Overview() {
 const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 },
   monthSwitcher: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  monthBtn: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
+  monthBtn: { width: 28, height: 28, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   cardsRow: { flexDirection: 'row', gap: 12, flexWrap: 'wrap' },
-  statCard: { flex: 1, minWidth: 130, borderWidth: 1, borderRadius: 14, padding: 14 },
+  statCard: { flex: 1, minWidth: 130, borderWidth: 1, borderRadius: 20, padding: 14 },
+  statCardHero: { shadowOpacity: 0.22, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 3 },
   editRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 14 },
-  editBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 9 },
+  editBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11 },
   budgetRow: { marginBottom: 18 },
   budgetRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  barTrack: { height: 8, borderRadius: 4, overflow: 'hidden' },
-  barFill: { height: 8, borderRadius: 4 },
-  budgetInput: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 80, textAlign: 'right' },
+  budgetRowName: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  categorySwatch: { width: 12, height: 12, borderRadius: 4 },
+  barTrack: { height: 10, borderRadius: 5, overflow: 'hidden' },
+  barFill: { height: 10, borderRadius: 5 },
+  budgetInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 80, textAlign: 'right' },
 });

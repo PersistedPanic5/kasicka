@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Slot, usePathname, Link } from 'expo-router';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Circle, Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -17,6 +17,70 @@ const NAV_ITEMS = [
   { href: '/(app)/planning', labelKey: 'nav.planning' },
   { href: '/(app)/settings', labelKey: 'nav.settings' },
 ] as const;
+
+/** Widest content is allowed to get under the nav — keeps every screen
+ * readable and centered on a wide desktop window instead of stretching
+ * edge-to-edge (Pavel: the entry form "loaded on computer screen on top
+ * left side" on a wide screen — the real bug was no width cap at all, so
+ * flex-start-aligned content just sat at its natural size in the corner). */
+const CONTENT_MAX_WIDTH = 1040;
+
+/** Small stroke icons for the nav, one per NAV_ITEMS href — design-refresh
+ * addition (2026-09) so the nav reads at a glance instead of as a plain
+ * text pill row. Same 24x24 viewBox / 1.9 stroke / round-cap vocabulary as
+ * the icons already used elsewhere in this file and in transactions.tsx. */
+const NAV_ICONS: Record<string, (color: string) => ReactElement> = {
+  '/(app)/home': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 11.5 12 4l8 7.5" />
+      <Path d="M6 10v9a1 1 0 0 0 1 1h4v-6h2v6h4a1 1 0 0 0 1-1v-9" />
+    </Svg>
+  ),
+  '/(app)/payments': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 6h18v12H3z" />
+      <Path d="M12 9.6a2.4 2.4 0 1 0 0 4.8 2.4 2.4 0 0 0 0-4.8Z" />
+      <Path d="M3 10h1.6M19.4 14H21" />
+    </Svg>
+  ),
+  '/(app)/debts': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" />
+      <Path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+      <Path d="M21 21v-2a4 4 0 0 0-3-3.87" />
+      <Path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </Svg>
+  ),
+  '/(app)/transactions': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M8 6h13M8 12h13M8 18h13" />
+      <Circle cx="3.4" cy="6" r="1.1" fill={color} stroke="none" />
+      <Circle cx="3.4" cy="12" r="1.1" fill={color} stroke="none" />
+      <Circle cx="3.4" cy="18" r="1.1" fill={color} stroke="none" />
+    </Svg>
+  ),
+  '/(app)/overview': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round">
+      <Path d="M4 20V10M12 20V4M20 20v-7" />
+    </Svg>
+  ),
+  '/(app)/planning': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M5 5h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1Z" />
+      <Path d="M3 10h18M8 3v4M16 3v4" />
+    </Svg>
+  ),
+  '/(app)/settings': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round">
+      <Path d="M4 6h9M17 6h3" />
+      <Circle cx="13" cy="6" r="2" fill={color} stroke="none" />
+      <Path d="M4 12h3M11 12h9" />
+      <Circle cx="7" cy="12" r="2" fill={color} stroke="none" />
+      <Path d="M4 18h11M19 18h1" />
+      <Circle cx="15" cy="18" r="2" fill={color} stroke="none" />
+    </Svg>
+  ),
+};
 
 // Below this width the nav switches from the desktop horizontal link row to
 // a hamburger + dropdown menu. A horizontal-scrolling link row was the
@@ -95,19 +159,18 @@ export default function AppLayout() {
             >
               {NAV_ITEMS.map((item) => {
                 const active = pathname === item.href;
+                const color = active ? tokens.accentText : tokens.textMuted;
                 return (
                   <Link key={item.href} href={item.href} asChild>
-                    <Text
+                    <Pressable
                       style={StyleSheet.flatten([
                         styles.navLink,
-                        {
-                          backgroundColor: active ? tokens.accent : 'transparent',
-                          color: active ? tokens.accentText : tokens.textMuted,
-                        },
+                        { backgroundColor: active ? tokens.accent : 'transparent' },
                       ])}
                     >
-                      {t(item.labelKey)}
-                    </Text>
+                      {NAV_ICONS[item.href]?.(color)}
+                      <Text style={{ color, fontFamily: fontFamily.bold, fontSize: 13 }}>{t(item.labelKey)}</Text>
+                    </Pressable>
                   </Link>
                 );
               })}
@@ -139,6 +202,7 @@ export default function AppLayout() {
           <View style={[styles.menuPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
             {NAV_ITEMS.map((item) => {
               const active = pathname === item.href;
+              const color = active ? tokens.accentText : tokens.text;
               return (
                 <Link key={item.href} href={item.href} asChild>
                   <Pressable
@@ -147,9 +211,10 @@ export default function AppLayout() {
                       { backgroundColor: active ? tokens.accent : 'transparent' },
                     ])}
                   >
+                    {NAV_ICONS[item.href]?.(color)}
                     <Text
                       style={{
-                        color: active ? tokens.accentText : tokens.text,
+                        color,
                         fontFamily: active ? fontFamily.bold : fontFamily.semibold,
                         fontSize: 14.5,
                       }}
@@ -165,7 +230,9 @@ export default function AppLayout() {
       )}
 
       <View style={[styles.content, { padding: narrow ? 16 : 32 }]}>
-        <Slot />
+        <View style={styles.contentInner}>
+          <Slot />
+        </View>
       </View>
     </View>
   );
@@ -183,17 +250,18 @@ const styles = StyleSheet.create({
   navLeft: { flexDirection: 'row', alignItems: 'center', flexShrink: 1, minWidth: 0 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   navLinksScroll: { flexShrink: 1 },
-  navLinks: { flexDirection: 'row', gap: 6, alignItems: 'center' },
+  navLinks: { flexDirection: 'row', gap: 4, alignItems: 'center' },
   navLink: {
-    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 13,
     paddingVertical: 8,
-    borderRadius: 9,
-    fontSize: 13,
-    fontFamily: fontFamily.bold,
+    borderRadius: 10,
     overflow: 'hidden',
   },
   navRight: { flexDirection: 'row', alignItems: 'center', gap: 10, flexShrink: 0 },
-  iconBtn: { width: 34, height: 34, borderRadius: 10, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  iconBtn: { width: 34, height: 34, borderRadius: 11, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   menuBackdrop: {
     position: 'absolute',
     top: 64,
@@ -220,6 +288,18 @@ const styles = StyleSheet.create({
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 8 },
   },
-  menuItem: { paddingHorizontal: 20, paddingVertical: 14, borderRadius: 10, marginHorizontal: 6 },
-  content: { flex: 1, padding: 32 },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 10,
+    marginHorizontal: 6,
+  },
+  // alignItems: 'center' + a maxWidth on the inner wrapper is the centering
+  // fix — every screen under (app)/ used to stretch to (or sit pinned to
+  // the left of) the full remaining viewport width with no cap at all.
+  content: { flex: 1, alignItems: 'center' },
+  contentInner: { width: '100%', maxWidth: CONTENT_MAX_WIDTH },
 });
