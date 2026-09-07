@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocalSearchParams } from 'expo-router';
+import { Link, useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
@@ -63,12 +63,18 @@ import { translations, detectBrowserLanguage, type Language } from '@/lib/i18n';
  */
 const LANGUAGE_STORAGE_KEY = 'kasicka-debtshare-language';
 type DebtShareView = {
-  description: string;
-  amount: number;
-  status: 'OUTSTANDING' | 'CLAIMED_PAID' | 'SETTLED';
+  description: string | null;
+  amount: number | null;
+  status: 'OUTSTANDING' | 'CLAIMED_PAID' | 'SETTLED' | 'MERGED';
   target_account_prefix: string | null;
   target_account_number: string | null;
   target_bank_code: string | null;
+  /** Set only when status is MERGED — the current token to send the
+   * visitor to (already resolved through however many merge hops server-
+   * side), or null if that chain dead-ends because the replacement was
+   * itself since deleted. See supabase/migrations/
+   * 0011_debts_merge_supersede.sql. */
+  merged_into_token: string | null;
 };
 
 function formatCzechAccountNumber(
@@ -206,11 +212,11 @@ export default function DebtorSharePage() {
   }
 
   const qrPayload =
-    debt && debt.target_bank_code && debt.target_account_number
+    debt && debt.status !== 'MERGED' && debt.target_bank_code && debt.target_account_number && debt.amount != null
       ? buildSpdPayload({
           iban: czechIBAN(debt.target_bank_code, debt.target_account_number, debt.target_account_prefix),
           amount: debt.amount,
-          message: debt.description,
+          message: debt.description ?? undefined,
         })
       : null;
 
@@ -220,6 +226,11 @@ export default function DebtorSharePage() {
 
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]}>
+      {/* Centered, capped-width column — same reasoning as the app shell's
+          fix for content sitting pinned to one side on a wide desktop
+          browser window (this page has no nav chrome of its own, so it
+          needs its own copy of that fix rather than inheriting one). */}
+      <View style={styles.pageInner}>
       <View style={styles.header}>
         <View style={styles.brand}>
           <LogoMark size={15} color={tokens.accent} holeColor={tokens.bg} />
@@ -262,7 +273,36 @@ export default function DebtorSharePage() {
         </Text>
       )}
 
-      {!loading && debt && (
+      {/* A superseded link (folded into another debt via merge — see
+          supabase/migrations/0011_debts_merge_supersede.sql) used to land
+          on the same "invalid link" message as an unknown token, which
+          reads like a mistake or a broken link rather than what actually
+          happened. This tells the visitor plainly what happened and hands
+          them the current link, instead of a dead end. */}
+      {!loading && debt && debt.status === 'MERGED' && (
+        <View style={styles.body}>
+          <View style={[styles.avatar, { backgroundColor: tokens.cardAlt }]}>
+            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 15 }}>P</Text>
+          </View>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 6, textAlign: 'center' }}>
+            {t('debtShare.mergedTitle')}
+          </Text>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13, textAlign: 'center', marginBottom: 18 }}>
+            {debt.merged_into_token ? t('debtShare.mergedBody') : t('debtShare.mergedGone')}
+          </Text>
+          {debt.merged_into_token && (
+            <Link href={`/d/${debt.merged_into_token}`} asChild>
+              <Pressable style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
+                <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
+                  {t('debtShare.mergedOpenNew')}
+                </Text>
+              </Pressable>
+            </Link>
+          )}
+        </View>
+      )}
+
+      {!loading && debt && debt.status !== 'MERGED' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body}>
           <View style={[styles.avatar, { backgroundColor: tokens.cardAlt }]}>
             <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 15 }}>P</Text>
@@ -394,12 +434,14 @@ export default function DebtorSharePage() {
           )}
         </ScrollView>
       )}
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, paddingHorizontal: 22, paddingTop: 14, paddingBottom: 14 },
+  screen: { flex: 1, paddingHorizontal: 22, paddingTop: 14, paddingBottom: 14, alignItems: 'center' },
+  pageInner: { flex: 1, width: '100%', maxWidth: 440 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },

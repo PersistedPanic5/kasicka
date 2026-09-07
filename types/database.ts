@@ -46,7 +46,10 @@ export type TransactionStatus = 'PAID' | 'VOID';
 export type TransactionSource = 'MANUAL' | 'RECURRING' | 'LONG_TERM_QR' | 'DEBT_SETTLEMENT';
 export type RecurringFrequency = 'MONTHLY' | 'YEARLY';
 export type ReserveAmountMode = 'AUTO' | 'MANUAL';
-export type DebtStatus = 'OUTSTANDING' | 'CLAIMED_PAID' | 'SETTLED';
+/** MERGED added in 0011_debts_merge_supersede.sql — set on a debt that got
+ * folded into another one via merge, instead of the row being deleted.
+ * `merged_into_token` (below) says which debt replaced it. */
+export type DebtStatus = 'OUTSTANDING' | 'CLAIMED_PAID' | 'SETTLED' | 'MERGED';
 export type ThemeMode = 'light' | 'dark';
 
 export interface Profile {
@@ -216,6 +219,12 @@ export interface Debt {
   target_account_id: string;
   status: DebtStatus;
   share_token: string;
+  /** Set only when status is MERGED — the share_token of the debt this one
+   * was folded into. The public share page follows this (through however
+   * many hops) to send a visitor holding a superseded link to the current
+   * one instead of a dead end. See supabase/migrations/
+   * 0011_debts_merge_supersede.sql. */
+  merged_into_token: string | null;
   /** Shown on the public share link / used as the QR payment message —
    * see supabase/migrations/0003_debt_message.sql. Falls back to the
    * linked transaction's own note, then the category name, when unset. */
@@ -266,14 +275,21 @@ export type ExchangeRateInsert = Partial<ExchangeRateRow> &
   Pick<ExchangeRateRow, 'currency_code' | 'rate_date' | 'rate'>;
 export type ExchangeRateUpdate = Partial<ExchangeRateRow>;
 
-/** Shape returned by the public `get_debt_by_share_token` RPC — see 0002. */
+/** Shape returned by the public `get_debt_by_share_token` RPC — see 0002
+ * and, for the MERGED case, 0011_debts_merge_supersede.sql. When status is
+ * MERGED, every payment field is null (a superseded link never reveals the
+ * replacement's payment details) and `merged_into_token` — already resolved
+ * through however many merge hops — is the current token to send the
+ * visitor to next, or null if that chain dead-ends (the replacement was
+ * itself since deleted). */
 export interface DebtShareView {
-  description: string;
-  amount: number;
+  description: string | null;
+  amount: number | null;
   status: DebtStatus;
   target_account_prefix: string | null;
   target_account_number: string | null;
   target_bank_code: string | null;
+  merged_into_token: string | null;
 }
 
 export interface Database {

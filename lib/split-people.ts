@@ -246,10 +246,18 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
         failures.push(`${person.name}: ${error.message}`);
         continue;
       }
-      // The old debt's own share link is gone the moment its row is
-      // deleted -- the merge-offer copy in the UI says so up front.
-      await supabase.from('debts').delete().eq('id', existing.id);
-      if (data) links.push({ name: existing.owed_by_name, token: data.share_token });
+      // Mark the old debt MERGED and point it at the replacement instead
+      // of deleting it (supabase/migrations/0011_debts_merge_supersede.sql)
+      // -- its share link keeps resolving, now to a "this was merged"
+      // notice with a link through to this new one, rather than a dead
+      // end. The merge-offer copy in the UI says so up front.
+      if (data) {
+        await supabase
+          .from('debts')
+          .update({ status: 'MERGED', merged_into_token: data.share_token })
+          .eq('id', existing.id);
+        links.push({ name: existing.owed_by_name, token: data.share_token });
+      }
       continue;
     }
 

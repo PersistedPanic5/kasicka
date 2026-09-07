@@ -88,6 +88,11 @@ export default function Debts() {
       .select(
         'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from'
       )
+      // A debt folded into another one via merge (supabase/migrations/
+      // 0011_debts_merge_supersede.sql) is history, not something to act
+      // on — it stays in the table (so its old share link can point
+      // visitors to the replacement) but has no place in this list.
+      .neq('status', 'MERGED')
       .order('created_at', { ascending: false });
     setDebts(data ?? []);
     setLoading(false);
@@ -269,35 +274,47 @@ export default function Debts() {
     // original transactions/categories, so it deliberately points at none
     // of them rather than misattributing the total (see migration 0009 and
     // confirmSettled's null-guard above).
-    const { error: insertError } = await supabase.from('debts').insert({
-      owner_id: user.id,
-      transaction_id: null,
-      owed_by_name: mergeName.trim(),
-      amount: numericAmount,
-      target_account_id: selected[0]?.target_account_id,
-      message: mergeMessage.trim() || null,
-      // Snapshot of exactly what's being folded in, so "Unmerge" can
-      // recreate every original row — see supabase/migrations/
-      // 0010_debts_unmerge_support.sql.
-      merged_from: buildMergedFromSnapshot(
-        selected.map((d) => ({
-          owed_by_name: d.owed_by_name,
-          amount: Number(d.amount),
-          message: d.message,
-          transaction_id: d.transaction_id,
-          target_account_id: d.target_account_id,
-          merged_from: d.merged_from,
-        }))
-      ),
-    });
+    const { data: inserted, error: insertError } = await supabase
+      .from('debts')
+      .insert({
+        owner_id: user.id,
+        transaction_id: null,
+        owed_by_name: mergeName.trim(),
+        amount: numericAmount,
+        target_account_id: selected[0]?.target_account_id,
+        message: mergeMessage.trim() || null,
+        // Snapshot of exactly what's being folded in, so "Unmerge" can
+        // recreate every original row — see supabase/migrations/
+        // 0010_debts_unmerge_support.sql.
+        merged_from: buildMergedFromSnapshot(
+          selected.map((d) => ({
+            owed_by_name: d.owed_by_name,
+            amount: Number(d.amount),
+            message: d.message,
+            transaction_id: d.transaction_id,
+            target_account_id: d.target_account_id,
+            merged_from: d.merged_from,
+          }))
+        ),
+      })
+      .select('share_token')
+      .single();
 
-    if (insertError) {
-      setMergeModalError(insertError.message);
+    if (insertError || !inserted) {
+      setMergeModalError(insertError?.message ?? t('debts.mergeGenericError'));
       setMergeSaving(false);
       return;
     }
 
-    await supabase.from('debts').delete().in('id', selected.map((d) => d.id));
+    // Mark the folded-in debts MERGED and point them at the replacement,
+    // instead of deleting them (supabase/migrations/
+    // 0011_debts_merge_supersede.sql) — their public share links keep
+    // resolving, now to a "this was merged" notice with a link to this
+    // new one, rather than dead-ending.
+    await supabase
+      .from('debts')
+      .update({ status: 'MERGED', merged_into_token: inserted.share_token })
+      .in('id', selected.map((d) => d.id));
 
     setMergeSaving(false);
     setMergeModalOpen(false);
@@ -307,14 +324,21 @@ export default function Debts() {
   }
 
   // Undoes a merge (either the manual one above, or the "merge with
-  // existing debt" offer at save time in ExpenseEntryForm/transactions):
-  // deletes the merged row and recreates every row from its merged_from
-  // snapshot, each getting a fresh id/share_token (the old links are gone
-  // for good — lost the moment the merge deleted their rows — new ones
-  // are created here instead). Restricted to OUTSTANDING merged debts,
-  // same as merging itself, since once claimed/settled the ledger already
-  // reflects the combined total and unmerging would just be confusing.
-  // Two-tap confirm, same pattern as handleDeleteOne below.
+  // existing debt" offer at save time in ExpenseEntryForm/transactions).
+  // Since 0011_debts_merge_supersede.sql, the folded-in debts are still
+  // physically there (marked MERGED, not deleted) — so unmerging is just
+  // reviving them: flip them back to OUTSTANDING and clear
+  // merged_into_token, then delete the merged row. This restores each
+  // one's ORIGINAL share_token too, so a link sent before the merge
+  // starts working again instead of getting a new one — better than the
+  // old delete-and-recreate-from-snapshot approach, which could only ever
+  // hand out fresh links. `merged_from` is still what drives the button
+  // (which debts to look for) and, being untouched here, still carries
+  // forward correctly if one of the restored debts was itself already a
+  // merge. Restricted to OUTSTANDING merged debts, same as merging
+  // itself, since once claimed/settled the ledger already reflects the
+  // combined total and unmerging would just be confusing. Two-tap
+  // confirm, same pattern as handleDeleteOne below.
   async function handleUnmerge(debt: DebtRow) {
     if (!debt.merged_from || debt.merged_from.length === 0 || !user) return;
     if (pendingUnmergeId !== debt.id) {
@@ -325,20 +349,11 @@ export default function Debts() {
     setPendingUnmergeId(null);
     setBusyId(debt.id);
 
-    const restored = debt.merged_from.map((snap) => ({
-      owner_id: user.id,
-      transaction_id: snap.transaction_id,
-      owed_by_name: snap.owed_by_name,
-      amount: snap.amount,
-      target_account_id: snap.target_account_id,
-      message: snap.message,
-      // Carries forward any nested merge history so a debt that was
-      // itself already a merge, once restored, can be unmerged again too.
-      merged_from: snap.merged_from ?? null,
-    }));
-
-    const { error: insertError } = await supabase.from('debts').insert(restored);
-    if (!insertError) {
+    const { error: restoreError } = await supabase
+      .from('debts')
+      .update({ status: 'OUTSTANDING', merged_into_token: null })
+      .eq('merged_into_token', debt.share_token);
+    if (!restoreError) {
       await supabase.from('debts').delete().eq('id', debt.id);
     }
     setBusyId(null);
