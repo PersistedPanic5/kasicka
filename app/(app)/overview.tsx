@@ -301,21 +301,42 @@ export default function Overview() {
                 const shareOfTotal = totalPlanned > 0 ? Math.round((planned / totalPlanned) * 100) : 0;
 
                 return (
-                  <View key={cat.id} style={styles.budgetRow}>
-                    <View style={styles.budgetRowTop}>
-                      <View style={styles.budgetRowName}>
-                        {/* Category identity color — design refresh
-                            (2026-09): wires up tokens.category (defined,
-                            never used before) so categories are
-                            distinguishable at a glance. This is deliberately
-                            separate from the bar's over/under-budget color
-                            below it — before this change the same square
-                            carried both meanings at once. */}
-                        <View style={[styles.categorySwatch, { backgroundColor: categoryColor(index, tokens) }]} />
-                        <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>{cat.name}</Text>
+                  // Restructured to match Overview.dc.html's actual row
+                  // shape (Pavel: "the same goes for overview... redo it"):
+                  // a single card per category, a 34x34 identity block (not
+                  // a small dot) on the left, name/bar/amount inline in one
+                  // row — the over-budget caption is the one thing the
+                  // mockup didn't need to show, so it stays as a second
+                  // line inside the same card rather than being dropped.
+                  <View key={cat.id} style={[styles.budgetCard, { backgroundColor: tokens.card }]}>
+                    <View style={styles.budgetRow}>
+                      {/* Category identity color — design refresh (2026-09):
+                          wires up tokens.category (defined, never used
+                          before) so categories are distinguishable at a
+                          glance. Deliberately separate from the bar's
+                          over/under-budget color next to it — before this
+                          change the same square carried both meanings at
+                          once. */}
+                      <View style={[styles.categorySwatch, { backgroundColor: categoryColor(index, tokens) }]} />
+                      <Text
+                        numberOfLines={1}
+                        style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13.5, flexBasis: 92, flexShrink: 1 }}
+                      >
+                        {cat.name}
+                      </Text>
+                      <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt }]}>
+                        <View
+                          style={[
+                            styles.barFill,
+                            {
+                              width: `${Math.round(pct * 100)}%`,
+                              backgroundColor: over ? tokens.coral : tokens.accent,
+                            },
+                          ]}
+                        />
                       </View>
                       {editingAll ? (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={styles.budgetEditSlot}>
                           <TextInput
                             value={budgetDraftsAll[cat.id] ?? ''}
                             onChangeText={(v) => setBudgetDraftsAll((prev) => ({ ...prev, [cat.id]: v }))}
@@ -327,30 +348,30 @@ export default function Overview() {
                           </Text>
                         </View>
                       ) : (
-                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, fontVariant: ['tabular-nums'] }}>
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            color: tokens.textMuted,
+                            fontFamily: fontFamily.medium,
+                            fontSize: 12.5,
+                            fontVariant: ['tabular-nums'],
+                            flexBasis: 148,
+                            flexShrink: 0,
+                            textAlign: 'right',
+                          }}
+                        >
                           {actual} / {planned} {t('common.czk')}
                           {totalPlanned > 0 && (
-                            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
-                              {' '}
-                              · {shareOfTotal}% {t('overview.ofTotal')}
+                            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11 }}>
+                              {'\n'}
+                              {shareOfTotal}% {t('overview.ofTotal')}
                             </Text>
                           )}
                         </Text>
                       )}
                     </View>
-                    <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt }]}>
-                      <View
-                        style={[
-                          styles.barFill,
-                          {
-                            width: `${Math.round(pct * 100)}%`,
-                            backgroundColor: over ? tokens.coral : tokens.accent,
-                          },
-                        ]}
-                      />
-                    </View>
                     {over && (
-                      <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 3 }}>
+                      <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 6 }}>
                         {actual - planned} {t('common.czk')} {t('overview.overBudget')}
                       </Text>
                     )}
@@ -374,11 +395,17 @@ const styles = StyleSheet.create({
   statCardHero: { shadowOpacity: 0.22, shadowRadius: 18, shadowOffset: { width: 0, height: 10 }, elevation: 3 },
   editRow: { flexDirection: 'row', justifyContent: 'flex-end', marginBottom: 14 },
   editBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 11 },
-  budgetRow: { marginBottom: 18 },
-  budgetRowTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 },
-  budgetRowName: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  categorySwatch: { width: 12, height: 12, borderRadius: 4 },
-  barTrack: { height: 10, borderRadius: 5, overflow: 'hidden' },
+  // One card per category (Overview.dc.html: background:card, radius:18,
+  // padding:14/18) — matches the per-item-card pattern already used on
+  // Debts/Transactions, rather than plain unbounded rows.
+  budgetCard: { borderRadius: 18, padding: 14, marginBottom: 10 },
+  budgetRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  // 34x34 solid identity block, not a small dot — Overview.dc.html's
+  // actual spec, and a lot more visible at a glance than the 12px dot
+  // this replaced.
+  categorySwatch: { width: 34, height: 34, borderRadius: 12, flexShrink: 0 },
+  barTrack: { height: 10, borderRadius: 5, overflow: 'hidden', flex: 1, minWidth: 0 },
   barFill: { height: 10, borderRadius: 5 },
+  budgetEditSlot: { flexDirection: 'row', alignItems: 'center', gap: 6, flexBasis: 148, flexShrink: 0, justifyContent: 'flex-end' },
   budgetInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 80, textAlign: 'right' },
 });

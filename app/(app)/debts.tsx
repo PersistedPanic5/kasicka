@@ -481,6 +481,36 @@ export default function Debts() {
               {debt.amount} CZK
             </Text>
           </View>
+
+          {/* Status badge — Debts.dc.html gives every row one, but the real
+              card only ever implied status through which action buttons
+              showed up below (Pavel: "the same goes for... debts, redo it").
+              Same three labels transactions.tsx's list already uses. */}
+          {!selectMode && (
+            <View
+              style={[
+                styles.statusBadge,
+                {
+                  backgroundColor:
+                    debt.status === 'SETTLED' ? tokens.greenBg : debt.status === 'CLAIMED_PAID' ? tokens.amberBg : tokens.cardAlt,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  color: debt.status === 'SETTLED' ? tokens.greenFg : debt.status === 'CLAIMED_PAID' ? tokens.amberFg : tokens.textMuted,
+                  fontFamily: fontFamily.bold,
+                  fontSize: 11,
+                }}
+              >
+                {debt.status === 'SETTLED'
+                  ? t('debts.settled')
+                  : debt.status === 'CLAIMED_PAID'
+                  ? t('debts.awaitingConfirmation')
+                  : t('debts.outstanding')}
+              </Text>
+            </View>
+          )}
         </View>
 
         {!selectMode && (
@@ -864,6 +894,7 @@ const styles = StyleSheet.create({
   },
   cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   avatar: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  statusBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 9, flexShrink: 0, alignSelf: 'flex-start' },
   checkbox: {
     width: 20,
     height: 20,

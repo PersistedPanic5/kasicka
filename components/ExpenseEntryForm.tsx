@@ -489,7 +489,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
           behind the number regardless of how tall the rest of the form is. */}
       <View style={styles.amountWrap}>
         <View style={styles.watermarkWrap} pointerEvents="none">
-          <LogoMark size={132} color={tokens.text} holeColor={tokens.text} />
+          {/* Sized to match Main.dc.html's mockup exactly, not a rounder
+              guess: the mockup's watermark is 272px wide in a 390px-wide
+              frame (≈70% of the column) — LogoMark's `size` prop sets
+              height, so 272 / its 740:520 aspect ratio ≈ 191. Scaled up
+              for the wider desktop container by the same width ratio
+              (460 / 390) so it reads at the same relative weight there. */}
+          <LogoMark size={variant === 'desktop' ? 225 : 191} color={tokens.text} holeColor={tokens.text} />
         </View>
         <View style={styles.amountRow}>
           <TextInput
@@ -500,7 +506,18 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             placeholderTextColor={tokens.textMuted}
             style={[
               styles.amountInput,
-              { color: tokens.text, minWidth: Math.max(60, amount.length * 30), fontVariant: ['tabular-nums'] },
+              {
+                color: tokens.text,
+                minWidth: Math.max(60, amount.length * 30),
+                // Belt-and-suspenders against the input stretching to fill
+                // the row (which would shove the currency suffix off to
+                // the edge instead of sitting right next to the digits,
+                // as intended) — flexGrow:0 is the default, but pinning
+                // it explicitly here means this can't regress silently.
+                flexGrow: 0,
+                flexShrink: 0,
+                fontVariant: ['tabular-nums'],
+              },
             ]}
           />
         {/* Tap cycles CZK → each active currency → back to CZK (Pavel's
@@ -511,7 +528,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             that it's tappable. Only shown once there's something to cycle
             through. */}
         {activeCurrencies.length > 0 && (
-          <Pressable onPress={cycleCurrency} hitSlop={10} style={styles.currencySuffix}>
+          <Pressable onPress={cycleCurrency} hitSlop={10} style={[styles.currencySuffix, { flexGrow: 0, flexShrink: 0 }]}>
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 20 }}>
               {currency} <Text style={{ fontSize: 13 }}>▾</Text>
             </Text>
@@ -559,7 +576,15 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       )}
 
       {entryType === 'EXPENSE' && (
-        <View style={styles.chipRow}>
+        // A 3-per-row grid of EQUAL-width chips (Main.dc.html: `grid-
+        // template-columns: repeat(3, minmax(0,1fr))`) — not a content-
+        // hugging flexWrap row. With chips sized by their own label
+        // (Pavel: "the same size pills"), "Food" renders narrow and
+        // "Netflix and other internet subscription" stretches almost the
+        // full width on its own row; flexBasis: '31%' on every chip forces
+        // them all to the same width regardless of label length, with long
+        // names truncating instead of blowing out the grid.
+        <View style={styles.categoryGrid}>
           {categories.length === 0 ? (
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
               {dataLoading ? t('home.settingUpCategories') : t('home.noCategoriesYet')}
@@ -571,7 +596,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
                 <Pressable
                   key={cat.id}
                   onPress={() => setCategoryId(cat.id)}
-                  style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card }]}
+                  style={[styles.categoryChip, { backgroundColor: active ? tokens.accent : tokens.card }]}
                 >
                   {/* Identity dot, hidden once selected (the solid accent
                       fill already carries "selected") — design refresh
@@ -583,10 +608,12 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
                     <View style={[styles.categoryDot, { backgroundColor: categoryColor(index, tokens) }]} />
                   )}
                   <Text
+                    numberOfLines={1}
                     style={{
                       color: active ? tokens.accentText : tokens.text,
                       fontFamily: fontFamily.semibold,
                       fontSize: 13,
+                      flexShrink: 1,
                     }}
                   >
                     {cat.name}
@@ -930,7 +957,21 @@ const styles = StyleSheet.create({
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   quickAmountsHint: { textAlign: 'center', fontSize: 11, fontFamily: fontFamily.medium, marginTop: -4 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },
-  categoryDot: { width: 7, height: 7, borderRadius: 4 },
+  // 3-per-row equal-width grid — see the render-time comment above.
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 13,
+    borderRadius: 16,
+    flexBasis: '31%',
+    flexGrow: 0,
+    flexShrink: 0,
+  },
+  categoryDot: { width: 7, height: 7, borderRadius: 4, flexShrink: 0 },
   noteInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
   splitToggle: { alignItems: 'center', paddingVertical: 2 },
   splitPanel: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 8 },
