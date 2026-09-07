@@ -6,6 +6,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LogoMark } from '@/components/Logo';
+import { AppFooter } from '@/components/AppFooter';
 import { useLanguage } from '@/lib/language-context';
 
 const NAV_ITEMS = [
@@ -143,12 +144,18 @@ export default function AppLayout() {
             </Pressable>
           )}
 
-          <View style={styles.brand}>
-            <LogoMark size={18} color={tokens.accent} holeColor={tokens.bg} />
-            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 14, letterSpacing: 1 }}>
-              KASIČKA
-            </Text>
-          </View>
+          {/* ?stay=1 tells the landing page not to immediately redirect a
+              signed-in visitor straight back in here — Pavel: "a way to
+              intentionally go to the index page and stay there... by
+              clicking on kasička logo". */}
+          <Link href="/?stay=1" asChild>
+            <Pressable style={styles.brand}>
+              <LogoMark size={18} color={tokens.accent} holeColor={tokens.bg} />
+              <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 14, letterSpacing: 1 }}>
+                KASIČKA
+              </Text>
+            </Pressable>
+          </Link>
 
           {!narrow && (
             <ScrollView
@@ -234,6 +241,8 @@ export default function AppLayout() {
           <Slot />
         </View>
       </View>
+
+      <AppFooter tokens={tokens} />
     </View>
   );
 }

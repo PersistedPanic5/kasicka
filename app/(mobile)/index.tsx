@@ -6,6 +6,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LogoMark } from '@/components/Logo';
+import { AppFooter } from '@/components/AppFooter';
 import { ExpenseEntryForm } from '@/components/ExpenseEntryForm';
 import { useLanguage } from '@/lib/language-context';
 
@@ -26,12 +27,15 @@ export default function MobileFastEntry() {
           is opened directly, rather than through the (app) shell. */}
       <View style={styles.inner}>
         <View style={styles.header}>
-          <View style={styles.brand}>
-            <LogoMark size={16} color={tokens.accent} holeColor={tokens.bg} />
-            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 12, letterSpacing: 1 }}>
-              KASIČKA
-            </Text>
-          </View>
+          {/* ?stay=1 — see the matching comment in (app)/_layout.tsx */}
+          <Link href="/?stay=1" asChild>
+            <Pressable style={styles.brand}>
+              <LogoMark size={16} color={tokens.accent} holeColor={tokens.bg} />
+              <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 12, letterSpacing: 1 }}>
+                KASIČKA
+              </Text>
+            </Pressable>
+          </Link>
           <View style={styles.headerIcons}>
             <Link href="/(app)/home" asChild>
               <Pressable
@@ -52,6 +56,8 @@ export default function MobileFastEntry() {
         <View style={styles.formWrap}>
           <ExpenseEntryForm variant="mobile" />
         </View>
+
+        <AppFooter tokens={tokens} />
       </View>
     </SafeAreaView>
   );

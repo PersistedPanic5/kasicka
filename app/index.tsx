@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
-import { Link, Redirect } from 'expo-router';
+import { Link, Redirect, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
 import { LogoMark } from '@/components/Logo';
+import { AppFooter, BUY_ME_A_COFFEE_URL } from '@/components/AppFooter';
 import { categoryColor, identityColorFor, withAlpha } from '@/lib/identity';
 
 /**
@@ -35,11 +36,6 @@ import { categoryColor, identityColorFor, withAlpha } from '@/lib/identity';
  * reproductions built from the same tokens, not live screenshots.
  */
 const DESKTOP_BREAKPOINT = 900; // matches (app)/_layout.tsx's own nav breakpoint
-
-// Pavel: "link to buymea coffee (i will provide that)" — swap this for the
-// real URL once he sends it; everything downstream (the button below)
-// already points at whatever's here.
-const BUY_ME_A_COFFEE_URL = 'https://buymeacoffee.com/REPLACE_ME';
 
 /**
  * This is the one route whose content is baked at static-export build
@@ -74,6 +70,12 @@ function useHydratedWidth(): number | null {
 export default function Landing() {
   const { tokens } = useTheme();
   const { session, loading } = useAuth();
+  // Clicking the logo from inside the app (see (app)/_layout.tsx and
+  // (mobile)/index.tsx) links here with ?stay=1 — Pavel: "I need to have a
+  // way to intentionally go to the index page and stay there". Without
+  // this, a signed-in visitor lands on `/` for a split second before the
+  // redirect below bounces them straight back into the app.
+  const { stay } = useLocalSearchParams<{ stay?: string }>();
   const clientWidth = useHydratedWidth();
   const width = clientWidth ?? 0; // null (pre-mount) reads as narrow, matching the static export exactly
   const isDesktop = width >= DESKTOP_BREAKPOINT;
@@ -90,7 +92,7 @@ export default function Landing() {
   // post-login redirect used to do via the old index.tsx.
   return (
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]} edges={['top', 'bottom']}>
-      {!loading && session && <Redirect href={isDesktop ? '/(app)/home' : '/(mobile)'} />}
+      {!loading && session && !stay && <Redirect href={isDesktop ? '/(app)/home' : '/(mobile)'} />}
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.page}>
           <Header tokens={tokens} />
@@ -99,7 +101,7 @@ export default function Landing() {
           <FeaturesSection tokens={tokens} wide={wide} />
           <AboutSupportSection tokens={tokens} wide={wide} />
           <LegalSection tokens={tokens} />
-          <Footer tokens={tokens} />
+          <AppFooter tokens={tokens} />
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -464,18 +466,6 @@ function LegalSection({ tokens }: { tokens: Tokens }) {
   );
 }
 
-function Footer({ tokens }: { tokens: Tokens }) {
-  const year = useMemo(() => new Date().getFullYear(), []);
-  return (
-    <View style={[styles.footer, { borderTopColor: tokens.border }]}>
-      <View style={styles.brand}>
-        <LogoMark size={13} color={tokens.textMuted} holeColor={tokens.bg} />
-        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 12 }}>Kasička</Text>
-      </View>
-      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>© {year}</Text>
-    </View>
-  );
-}
 
 const CONTENT_MAX_WIDTH = 1040;
 
@@ -533,13 +523,4 @@ const styles = StyleSheet.create({
   featureDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5, flexShrink: 0 },
 
   coffeeBtn: { alignSelf: 'flex-start', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 12, borderWidth: 1 },
-
-  footer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 20,
-    borderTopWidth: 1,
-    marginBottom: 20,
-  },
 });

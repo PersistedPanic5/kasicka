@@ -60,7 +60,27 @@ export default function Root({ children }: PropsWithChildren) {
             own ThemeProvider paints — matches app.json's web.backgroundColor. */}
         <style dangerouslySetInnerHTML={{ __html: `html,body{background-color:${THEME_COLOR}}` }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        {/* Buy Me a Coffee floating widget — Pavel provided this script
+            directly and asked for it "everywhere needed"; this file wraps
+            every exported web page, so one copy here covers the whole
+            site instead of repeating it per screen. No-op on native (this
+            file only runs for the web export). */}
+        <script
+          type="text/javascript"
+          src="https://cdnjs.buymeacoffee.com/1.0.0/button.prod.min.js"
+          data-name="bmc-button"
+          data-slug="pavelskuhrovec"
+          data-color="#40DCA5"
+          data-emoji=""
+          data-font="Cookie"
+          data-text="Buy me a coffee"
+          data-outline-color="#000000"
+          data-font-color="#ffffff"
+          data-coffee-color="#FFDD00"
+        />
+      </body>
     </html>
   );
 }
