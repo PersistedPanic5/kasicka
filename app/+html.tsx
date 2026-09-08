@@ -59,6 +59,28 @@ export default function Root({ children }: PropsWithChildren) {
         {/* Keep the page background steady (no white flash) before the app's
             own ThemeProvider paints — matches app.json's web.backgroundColor. */}
         <style dangerouslySetInnerHTML={{ __html: `html,body{background-color:${THEME_COLOR}}` }} />
+
+        {/* A thin, modern overlay scrollbar everywhere — the browser
+            default (a thick grey Windows-style bar) is what Pavel saw once
+            transactions/overview/the split-rows list actually started
+            scrolling. Neutral semi-transparent grey rather than a themed
+            color since this is static CSS with no access to light/dark
+            mode (theme state is in-memory React, not a DOM attribute) —
+            reads fine on both. Firefox gets the same treatment via
+            scrollbar-width/scrollbar-color; there's no Firefox equivalent
+            of the hover-darken. */}
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              * { scrollbar-width: thin; scrollbar-color: rgba(120,120,120,0.45) transparent; }
+              *::-webkit-scrollbar { width: 8px; height: 8px; }
+              *::-webkit-scrollbar-track { background: transparent; }
+              *::-webkit-scrollbar-thumb { background-color: rgba(120,120,120,0.35); border-radius: 8px; }
+              *::-webkit-scrollbar-thumb:hover { background-color: rgba(120,120,120,0.55); }
+              *::-webkit-scrollbar-corner { background: transparent; }
+            `,
+          }}
+        />
       </head>
       <body>
         {children}
