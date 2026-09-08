@@ -291,8 +291,18 @@ export default function DebtorSharePage() {
             {debt.merged_into_token ? t('debtShare.mergedBody') : t('debtShare.mergedGone')}
           </Text>
           {debt.merged_into_token && (
+            // StyleSheet.flatten, not a raw style array — expo-router's
+            // `asChild` clones this Pressable to attach its own press
+            // handling, and an unflattened array style here crashes at
+            // hydration on web ("Failed to set an indexed property...
+            // CSSStyleDeclaration"), which took the whole page down to a
+            // blank white screen (confirmed live: this exact "Open the
+            // current link" button, on the one branch — a MERGED debt —
+            // that actually renders a Link/asChild on this page). Same
+            // fix already applied to the landing page and the mobile
+            // header elsewhere in this app.
             <Link href={`/d/${debt.merged_into_token}`} asChild>
-              <Pressable style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
+              <Pressable style={StyleSheet.flatten([styles.primaryBtn, { backgroundColor: tokens.accent }])}>
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
                   {t('debtShare.mergedOpenNew')}
                 </Text>
