@@ -310,5 +310,14 @@ const styles = StyleSheet.create({
   // fix — every screen under (app)/ used to stretch to (or sit pinned to
   // the left of) the full remaining viewport width with no cap at all.
   content: { flex: 1, alignItems: 'center' },
-  contentInner: { width: '100%', maxWidth: CONTENT_MAX_WIDTH },
+  // flex: 1 + minHeight: 0 here (not just width/maxWidth) is what actually
+  // lets a tall screen (transactions, overview) scroll — without it this
+  // View hugs its own content's full height instead of being clamped to
+  // the space `content` has available, which means the screen's own
+  // ScrollView never gets a bounded box to scroll within and the mouse
+  // wheel does nothing (confirmed with a throwaway 60-row test screen:
+  // wheel scroll moved nothing without this, worked immediately with it —
+  // pre-existing bug, unrelated to the footer, just never hit before a
+  // screen's content got tall enough to matter).
+  contentInner: { width: '100%', maxWidth: CONTENT_MAX_WIDTH, flex: 1, minHeight: 0 },
 });

@@ -1,5 +1,5 @@
 import { Link } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
@@ -53,9 +53,14 @@ export default function MobileFastEntry() {
           </View>
         </View>
 
-        <View style={styles.formWrap}>
+        {/* A ScrollView, not a plain View — the form has no scroll
+            mechanism of its own, so with several split-with-someone rows
+            added (Pavel: "adding multiple row debts in record expense")
+            it can grow taller than the screen with no way to reach the
+            Save button below the fold. */}
+        <ScrollView style={styles.formScroll} contentContainerStyle={styles.formWrap}>
           <ExpenseEntryForm variant="mobile" />
-        </View>
+        </ScrollView>
 
         <AppFooter tokens={tokens} />
       </View>
@@ -70,5 +75,9 @@ const styles = StyleSheet.create({
   brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIcons: { flexDirection: 'row', gap: 8 },
   iconBtn: { width: 34, height: 34, borderRadius: 11, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  formWrap: { flex: 1, alignItems: 'center', justifyContent: 'flex-start', paddingTop: 20 },
+  // flex: 1 + minHeight: 0 on the ScrollView itself — same fix as
+  // (app)/_layout.tsx's contentInner — is what lets it actually clamp to
+  // the available space and scroll instead of just growing with the form.
+  formScroll: { flex: 1, width: '100%', minHeight: 0 },
+  formWrap: { alignItems: 'center', justifyContent: 'flex-start', paddingTop: 20, paddingBottom: 20 },
 });
