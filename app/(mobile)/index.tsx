@@ -57,8 +57,11 @@ export default function MobileFastEntry() {
             mechanism of its own, so with several split-with-someone rows
             added (Pavel: "adding multiple row debts in record expense")
             it can grow taller than the screen with no way to reach the
-            Save button below the fold. */}
-        <ScrollView style={styles.formScroll} contentContainerStyle={styles.formWrap}>
+            Save button below the fold. showsVerticalScrollIndicator={false}
+            (Pavel: no visible scrollbar on this screen) keeps this looking
+            like a plain card rather than growing a scrollbar down one side
+            of it — react-native-web still scrolls fine with it hidden. */}
+        <ScrollView style={styles.formScroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.formWrap}>
           <ExpenseEntryForm variant="mobile" />
         </ScrollView>
 
