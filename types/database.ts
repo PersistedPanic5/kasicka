@@ -71,6 +71,15 @@ export interface Profile {
   /** Subset of tracked_currencies that shows up in Record Expense's
    * currency picker. CZK is never in either list — it's the implicit base. */
   active_currencies: string[];
+  /** Record Expense's "recent inputs" list, below Save — on by default.
+   * See migration 0012 and Settings → Recent inputs. */
+  recent_inputs_enabled: boolean;
+  /** 1–20, matching the schema's check constraint. */
+  recent_inputs_count: number;
+  /** 'all': last N entries overall. 'category': last N in whichever
+   * category is currently selected on the form (falls back to 'all' for
+   * Income, which has no category). */
+  recent_inputs_scope: 'all' | 'category';
 }
 export type ProfileInsert = Partial<Profile> & Pick<Profile, 'id'>;
 export type ProfileUpdate = Partial<Profile>;

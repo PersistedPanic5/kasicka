@@ -27,6 +27,12 @@ interface AppData {
    * Currencies. Empty while loading or if none are active — the picker
    * just doesn't offer anything besides CZK in that case. */
   activeCurrencies: string[];
+  /** `profile.recent_inputs_*` — the "recent inputs" list below Save on
+   * Record Expense, editable in Settings → Recent inputs. Defaults match
+   * the schema defaults (migration 0012) while still loading. */
+  recentInputsEnabled: boolean;
+  recentInputsCount: number;
+  recentInputsScope: 'all' | 'category';
   /** True while the first-sign-in bootstrap and/or the fetch below is
    * still in flight — callers should disable Save rather than let it
    * write with a null account/category. */
@@ -52,6 +58,9 @@ export function useAppData(): AppData {
   const [amountButtons, setAmountButtons] = useState<number[]>([20, 50, 100, 200]);
   const [quickAmountsEnabled, setQuickAmountsEnabled] = useState(true);
   const [activeCurrencies, setActiveCurrencies] = useState<string[]>([]);
+  const [recentInputsEnabled, setRecentInputsEnabled] = useState(true);
+  const [recentInputsCount, setRecentInputsCount] = useState(5);
+  const [recentInputsScope, setRecentInputsScope] = useState<'all' | 'category'>('all');
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => {
@@ -63,6 +72,9 @@ export function useAppData(): AppData {
       setAmountButtons([20, 50, 100, 200]);
       setQuickAmountsEnabled(true);
       setActiveCurrencies([]);
+      setRecentInputsEnabled(true);
+      setRecentInputsCount(5);
+      setRecentInputsScope('all');
       setLoading(false);
       return;
     }
@@ -80,7 +92,9 @@ export function useAppData(): AppData {
       const [profileRes, categoriesRes, accountsRes] = await Promise.all([
         supabase
           .from('profile')
-          .select('default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, active_currencies')
+          .select(
+            'default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, active_currencies, recent_inputs_enabled, recent_inputs_count, recent_inputs_scope'
+          )
           .eq('id', user.id)
           .maybeSingle(),
         supabase.from('categories').select('*').eq('category_type', 'EXPENSE').order('sort_order'),
@@ -97,6 +111,9 @@ export function useAppData(): AppData {
       );
       setQuickAmountsEnabled(profileRes.data?.quick_amounts_enabled ?? true);
       setActiveCurrencies(profileRes.data?.active_currencies ?? []);
+      setRecentInputsEnabled(profileRes.data?.recent_inputs_enabled ?? true);
+      setRecentInputsCount(profileRes.data?.recent_inputs_count ?? 5);
+      setRecentInputsScope(profileRes.data?.recent_inputs_scope ?? 'all');
       setCategories(categoriesRes.data ?? []);
       setAccounts(accountsRes.data ?? []);
       setLoading(false);
@@ -117,6 +134,9 @@ export function useAppData(): AppData {
     amountButtons,
     quickAmountsEnabled,
     activeCurrencies,
+    recentInputsEnabled,
+    recentInputsCount,
+    recentInputsScope,
     loading,
     refresh,
   };

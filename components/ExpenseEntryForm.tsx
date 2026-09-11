@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
@@ -30,6 +30,18 @@ interface MergeOfferMatch {
   name: string;
   newAmount: number;
   existing: OutstandingDebtMatch;
+}
+
+/** One row of the "recent inputs" list below Save (Pavel: "not sure what
+ * exactly have I already input") — just enough to render one lightweight
+ * line, not a full Transaction. */
+interface RecentInputRow {
+  id: string;
+  amount: number;
+  type: 'EXPENSE' | 'INCOME';
+  note: string | null;
+  category_id: string | null;
+  transaction_date: string;
 }
 
 const WEEKDAY_SHORT_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -94,6 +106,9 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     amountButtons,
     quickAmountsEnabled,
     activeCurrencies,
+    recentInputsEnabled,
+    recentInputsCount,
+    recentInputsScope,
     loading: dataLoading,
   } = useAppData();
 
@@ -127,6 +142,9 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [shareLinks, setShareLinks] = useState<{ name: string; link: string }[]>([]);
   const [copiedLinkIdx, setCopiedLinkIdx] = useState<number | null>(null);
 
+  // ── Recent inputs (Settings → Recent inputs) ────────────────────────
+  const [recentInputs, setRecentInputs] = useState<RecentInputRow[]>([]);
+
   const [showMoreOptions, setShowMoreOptions] = useState(false);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [photoPath, setPhotoPath] = useState<string | null>(null);
@@ -139,6 +157,37 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   // bootstrap creates them) — default to the first one once they arrive.
   const activeCategoryId = categoryId ?? categories[0]?.id ?? null;
   const activeAccountId = selectedAccountId ?? defaultAccountId;
+
+  // Category scoping only makes sense for EXPENSE (INCOME has no category)
+  // — falls back to the last N overall in that case, rather than the list
+  // just going empty on the Income tab.
+  const recentInputsCategoryFilter =
+    recentInputsScope === 'category' && entryType === 'EXPENSE' ? activeCategoryId : null;
+
+  const loadRecentInputs = useCallback(async () => {
+    if (!user || !recentInputsEnabled) {
+      setRecentInputs([]);
+      return;
+    }
+    // source: 'MANUAL' — only entries actually typed in here (or on
+    // Transactions' own "add"), not recurring/long-term auto-generated
+    // rows, which isn't what Pavel meant by "what have I already input".
+    let query = supabase
+      .from('transactions')
+      .select('id, amount, type, note, category_id, transaction_date')
+      .eq('owner_id', user.id)
+      .eq('status', 'PAID')
+      .eq('source', 'MANUAL')
+      .order('created_at', { ascending: false })
+      .limit(recentInputsCount);
+    if (recentInputsCategoryFilter) query = query.eq('category_id', recentInputsCategoryFilter);
+    const { data } = await query;
+    setRecentInputs((data as RecentInputRow[] | null) ?? []);
+  }, [user, recentInputsEnabled, recentInputsCount, recentInputsCategoryFilter]);
+
+  useEffect(() => {
+    loadRecentInputs();
+  }, [loadRecentInputs]);
 
   // profile.amount_buttons, editable in Settings → Quick amounts — falls
   // back to the schema default if it's ever empty (e.g. mid-edit there).
@@ -413,6 +462,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
 
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1200);
+    loadRecentInputs();
     setEntryType('EXPENSE');
     setAmount('');
     setNote('');
@@ -852,6 +902,39 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         </Text>
       </Pressable>
 
+      {/* Recent inputs (Settings → Recent inputs) — Pavel: "I am not sure
+          what exactly have I already input". Deliberately lightweight: no
+          card/border chrome of its own, just a muted label and plain rows,
+          so it reads as part of this screen rather than another panel. */}
+      {recentInputsEnabled && recentInputs.length > 0 && (
+        <View style={styles.recentInputsWrap}>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+            {t('home.recentInputsHeading')}
+          </Text>
+          {recentInputs.map((row) => {
+            const label =
+              row.note?.trim() ||
+              categories.find((c) => c.id === row.category_id)?.name ||
+              (row.type === 'INCOME' ? t('home.entryTypeIncome') : t('home.entryTypeExpense'));
+            const isIncome = row.type === 'INCOME';
+            return (
+              <View key={row.id} style={styles.recentInputRow}>
+                <Text numberOfLines={1} style={{ flex: 1, color: tokens.text, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+                  {label}
+                </Text>
+                <Text style={{ color: isIncome ? tokens.greenFg : tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                  {isIncome ? '+' : '−'}
+                  {row.amount} {t('common.czk')}
+                </Text>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11 }}>
+                  {formatShortDate(row.transaction_date, language)}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
       <Modal visible={mergeOffer !== null} transparent animationType="fade" onRequestClose={() => setMergeOffer(null)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
@@ -981,6 +1064,8 @@ const styles = StyleSheet.create({
   splitAddPersonBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 11 },
   shareBox: { borderRadius: 16, padding: 12, gap: 8 },
   shareLinkRow: { gap: 4 },
+  recentInputsWrap: { gap: 6 },
+  recentInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 11 },
   saveBtn: {
     paddingVertical: 16,

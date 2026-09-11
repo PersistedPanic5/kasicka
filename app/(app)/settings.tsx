@@ -140,6 +140,14 @@ export default function Settings() {
   const [quickAmountsEnabled, setQuickAmountsEnabled] = useState(true);
   const [savingQuickAmountsEnabled, setSavingQuickAmountsEnabled] = useState(false);
 
+  // ── Recent inputs (Pavel: "not sure what exactly have I already input") ─
+  const [recentInputsEnabled, setRecentInputsEnabled] = useState(true);
+  const [savingRecentInputsEnabled, setSavingRecentInputsEnabled] = useState(false);
+  const [recentInputsCount, setRecentInputsCount] = useState(5);
+  const [savingRecentInputsCount, setSavingRecentInputsCount] = useState(false);
+  const [recentInputsScope, setRecentInputsScope] = useState<'all' | 'category'>('all');
+  const [savingRecentInputsScope, setSavingRecentInputsScope] = useState(false);
+
   // ── Currencies (Pavel's request) ────────────────────────────────────
   const [trackedCurrencies, setTrackedCurrencies] = useState<string[]>([]);
   const [activeCurrencies, setActiveCurrencies] = useState<string[]>([]);
@@ -196,7 +204,9 @@ export default function Settings() {
       supabase.from('accounts').select('*').eq('owner_id', user.id).order('sort_order'),
       supabase
         .from('profile')
-        .select('default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, tracked_currencies, active_currencies')
+        .select(
+          'default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, tracked_currencies, active_currencies, recent_inputs_enabled, recent_inputs_count, recent_inputs_scope'
+        )
         .eq('id', user.id)
         .maybeSingle(),
     ]);
@@ -212,6 +222,9 @@ export default function Settings() {
     setQuickAmountsEnabled(profileRes.data?.quick_amounts_enabled ?? true);
     setTrackedCurrencies(profileRes.data?.tracked_currencies ?? []);
     setActiveCurrencies(profileRes.data?.active_currencies ?? []);
+    setRecentInputsEnabled(profileRes.data?.recent_inputs_enabled ?? true);
+    setRecentInputsCount(profileRes.data?.recent_inputs_count ?? 5);
+    setRecentInputsScope(profileRes.data?.recent_inputs_scope ?? 'all');
     setLoading(false);
   }, [user]);
 
@@ -324,6 +337,34 @@ export default function Settings() {
     setSavingQuickAmountsEnabled(true);
     await supabase.from('profile').update({ quick_amounts_enabled: next }).eq('id', user.id);
     setSavingQuickAmountsEnabled(false);
+  }
+
+  async function toggleRecentInputsEnabled() {
+    if (!user) return;
+    const next = !recentInputsEnabled;
+    setRecentInputsEnabled(next);
+    setSavingRecentInputsEnabled(true);
+    await supabase.from('profile').update({ recent_inputs_enabled: next }).eq('id', user.id);
+    setSavingRecentInputsEnabled(false);
+  }
+
+  /** 1–20, matching the schema's check constraint. */
+  async function changeRecentInputsCount(next: number) {
+    if (!user) return;
+    const clamped = Math.min(20, Math.max(1, next));
+    setRecentInputsCount(clamped);
+    setSavingRecentInputsCount(true);
+    await supabase.from('profile').update({ recent_inputs_count: clamped }).eq('id', user.id);
+    setSavingRecentInputsCount(false);
+  }
+
+  async function toggleRecentInputsScope() {
+    if (!user) return;
+    const next = recentInputsScope === 'all' ? 'category' : 'all';
+    setRecentInputsScope(next);
+    setSavingRecentInputsScope(true);
+    await supabase.from('profile').update({ recent_inputs_scope: next }).eq('id', user.id);
+    setSavingRecentInputsScope(false);
   }
 
   function removeAmountButton(value: number) {
@@ -802,6 +843,88 @@ export default function Settings() {
                 </Text>
               </Pressable>
             </View>
+              </>
+            )}
+          </Section>
+
+          <Section
+            expanded={expandedSections.has('recentInputs')}
+            onToggle={() => toggleSection('recentInputs')}
+            title={t('more.recentInputsTitle')}
+            description={t('more.recentInputsSectionDesc')}
+            titleColor={tokens.text}
+            descColor={tokens.textMuted}
+            chevronColor={tokens.textMuted}
+          >
+            <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border, marginBottom: 10 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                  {t('more.recentInputsToggleLabel')}
+                </Text>
+              </View>
+              <Pressable
+                onPress={toggleRecentInputsEnabled}
+                disabled={savingRecentInputsEnabled}
+                style={[
+                  styles.smallBtn,
+                  { backgroundColor: recentInputsEnabled ? tokens.accent : tokens.cardAlt, opacity: savingRecentInputsEnabled ? 0.6 : 1 },
+                ]}
+              >
+                <Text
+                  style={{
+                    color: recentInputsEnabled ? tokens.accentText : tokens.text,
+                    fontFamily: fontFamily.semibold,
+                    fontSize: 12,
+                  }}
+                >
+                  {recentInputsEnabled ? t('more.recentInputsOn') : t('more.recentInputsOff')}
+                </Text>
+              </Pressable>
+            </View>
+            {recentInputsEnabled && (
+              <>
+                <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border, marginBottom: 10 }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                      {t('more.recentInputsCountLabel')}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Pressable
+                      onPress={() => changeRecentInputsCount(recentInputsCount - 1)}
+                      disabled={savingRecentInputsCount || recentInputsCount <= 1}
+                      style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: recentInputsCount <= 1 ? 0.4 : 1 }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>−</Text>
+                    </Pressable>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 14, width: 20, textAlign: 'center' }}>
+                      {recentInputsCount}
+                    </Text>
+                    <Pressable
+                      onPress={() => changeRecentInputsCount(recentInputsCount + 1)}
+                      disabled={savingRecentInputsCount || recentInputsCount >= 20}
+                      style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: recentInputsCount >= 20 ? 0.4 : 1 }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>+</Text>
+                    </Pressable>
+                  </View>
+                </View>
+                <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                      {t('more.recentInputsScopeLabel')}
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={toggleRecentInputsScope}
+                    disabled={savingRecentInputsScope}
+                    style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: savingRecentInputsScope ? 0.6 : 1 }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                      {recentInputsScope === 'all' ? t('more.recentInputsScopeAll') : t('more.recentInputsScopeCategory')}
+                    </Text>
+                  </Pressable>
+                </View>
               </>
             )}
           </Section>
