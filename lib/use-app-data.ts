@@ -33,6 +33,9 @@ interface AppData {
   recentInputsEnabled: boolean;
   recentInputsCount: number;
   recentInputsScope: 'all' | 'category';
+  /** `profile.recent_inputs_category_chars` — how many characters of a
+   * row's category name to show before truncating with "…". */
+  recentInputsCategoryChars: number;
   /** True while the first-sign-in bootstrap and/or the fetch below is
    * still in flight — callers should disable Save rather than let it
    * write with a null account/category. */
@@ -61,6 +64,7 @@ export function useAppData(): AppData {
   const [recentInputsEnabled, setRecentInputsEnabled] = useState(true);
   const [recentInputsCount, setRecentInputsCount] = useState(5);
   const [recentInputsScope, setRecentInputsScope] = useState<'all' | 'category'>('all');
+  const [recentInputsCategoryChars, setRecentInputsCategoryChars] = useState(8);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(() => {
@@ -75,6 +79,7 @@ export function useAppData(): AppData {
       setRecentInputsEnabled(true);
       setRecentInputsCount(5);
       setRecentInputsScope('all');
+      setRecentInputsCategoryChars(8);
       setLoading(false);
       return;
     }
@@ -93,7 +98,7 @@ export function useAppData(): AppData {
         supabase
           .from('profile')
           .select(
-            'default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, active_currencies, recent_inputs_enabled, recent_inputs_count, recent_inputs_scope'
+            'default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, active_currencies, recent_inputs_enabled, recent_inputs_count, recent_inputs_scope, recent_inputs_category_chars'
           )
           .eq('id', user.id)
           .maybeSingle(),
@@ -114,6 +119,7 @@ export function useAppData(): AppData {
       setRecentInputsEnabled(profileRes.data?.recent_inputs_enabled ?? true);
       setRecentInputsCount(profileRes.data?.recent_inputs_count ?? 5);
       setRecentInputsScope(profileRes.data?.recent_inputs_scope ?? 'all');
+      setRecentInputsCategoryChars(profileRes.data?.recent_inputs_category_chars ?? 8);
       setCategories(categoriesRes.data ?? []);
       setAccounts(accountsRes.data ?? []);
       setLoading(false);
@@ -137,6 +143,7 @@ export function useAppData(): AppData {
     recentInputsEnabled,
     recentInputsCount,
     recentInputsScope,
+    recentInputsCategoryChars,
     loading,
     refresh,
   };

@@ -80,6 +80,9 @@ export interface Profile {
    * category is currently selected on the form (falls back to 'all' for
    * Income, which has no category). */
   recent_inputs_scope: 'all' | 'category';
+  /** Max characters shown for a row's category name in the recent-inputs
+   * list before it's truncated with "…" — 3–24, see migration 0013. */
+  recent_inputs_category_chars: number;
 }
 export type ProfileInsert = Partial<Profile> & Pick<Profile, 'id'>;
 export type ProfileUpdate = Partial<Profile>;

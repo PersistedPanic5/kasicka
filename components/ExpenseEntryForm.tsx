@@ -58,6 +58,15 @@ function formatShortDate(iso: string, language: 'en' | 'cs'): string {
   return language === 'cs' ? `${weekday} ${day}. ${d.getMonth() + 1}.` : `${weekday} ${day} ${MONTH_SHORT_EN[d.getMonth()]}`;
 }
 
+/** Shortens a category name for the recent-inputs list — Pavel: "shorten
+ * it to 8 signs or something like that", configurable in Settings →
+ * Recent inputs. Plain character-count truncation (not numberOfLines'
+ * layout-based ellipsis) since this sits in a fixed-width row next to the
+ * amount and date, which a long name would otherwise push off. */
+function truncateCategoryName(name: string, maxChars: number): string {
+  return name.length > maxChars ? `${name.slice(0, maxChars)}…` : name;
+}
+
 /**
  * The fast expense-capture form — the single most important screen in the
  * app (see screens-and-flows.md "Core UX principle"). Used both by the
@@ -109,6 +118,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     recentInputsEnabled,
     recentInputsCount,
     recentInputsScope,
+    recentInputsCategoryChars,
     loading: dataLoading,
   } = useAppData();
 
@@ -912,16 +922,25 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             {t('home.recentInputsHeading')}
           </Text>
           {recentInputs.map((row) => {
-            const label =
-              row.note?.trim() ||
-              categories.find((c) => c.id === row.category_id)?.name ||
-              (row.type === 'INCOME' ? t('home.entryTypeIncome') : t('home.entryTypeExpense'));
+            const categoryName = categories.find((c) => c.id === row.category_id)?.name ?? null;
             const isIncome = row.type === 'INCOME';
+            const label = row.note?.trim() || categoryName || (isIncome ? t('home.entryTypeIncome') : t('home.entryTypeExpense'));
+            // Only shown as its own tag when it's not already the label
+            // above (i.e. there was a note) — Income has no category at
+            // all. Otherwise "Food" would just repeat itself on the row.
+            const showCategoryTag = !isIncome && categoryName && label !== categoryName;
             return (
               <View key={row.id} style={styles.recentInputRow}>
                 <Text numberOfLines={1} style={{ flex: 1, color: tokens.text, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
                   {label}
                 </Text>
+                {showCategoryTag && (
+                  <View style={[styles.recentInputCategoryTag, { backgroundColor: tokens.cardAlt }]}>
+                    <Text numberOfLines={1} style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 10.5 }}>
+                      {truncateCategoryName(categoryName, recentInputsCategoryChars)}
+                    </Text>
+                  </View>
+                )}
                 <Text style={{ color: isIncome ? tokens.greenFg : tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                   {isIncome ? '+' : '−'}
                   {row.amount} {t('common.czk')}
@@ -1066,6 +1085,7 @@ const styles = StyleSheet.create({
   shareLinkRow: { gap: 4 },
   recentInputsWrap: { gap: 6 },
   recentInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  recentInputCategoryTag: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
   copyBtn: { alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 11 },
   saveBtn: {
     paddingVertical: 16,

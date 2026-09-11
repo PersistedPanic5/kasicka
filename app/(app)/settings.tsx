@@ -147,6 +147,8 @@ export default function Settings() {
   const [savingRecentInputsCount, setSavingRecentInputsCount] = useState(false);
   const [recentInputsScope, setRecentInputsScope] = useState<'all' | 'category'>('all');
   const [savingRecentInputsScope, setSavingRecentInputsScope] = useState(false);
+  const [recentInputsCategoryChars, setRecentInputsCategoryChars] = useState(8);
+  const [savingRecentInputsCategoryChars, setSavingRecentInputsCategoryChars] = useState(false);
 
   // ── Currencies (Pavel's request) ────────────────────────────────────
   const [trackedCurrencies, setTrackedCurrencies] = useState<string[]>([]);
@@ -205,7 +207,7 @@ export default function Settings() {
       supabase
         .from('profile')
         .select(
-          'default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, tracked_currencies, active_currencies, recent_inputs_enabled, recent_inputs_count, recent_inputs_scope'
+          'default_account_id, month_start_day, amount_buttons, quick_amounts_enabled, tracked_currencies, active_currencies, recent_inputs_enabled, recent_inputs_count, recent_inputs_scope, recent_inputs_category_chars'
         )
         .eq('id', user.id)
         .maybeSingle(),
@@ -225,6 +227,7 @@ export default function Settings() {
     setRecentInputsEnabled(profileRes.data?.recent_inputs_enabled ?? true);
     setRecentInputsCount(profileRes.data?.recent_inputs_count ?? 5);
     setRecentInputsScope(profileRes.data?.recent_inputs_scope ?? 'all');
+    setRecentInputsCategoryChars(profileRes.data?.recent_inputs_category_chars ?? 8);
     setLoading(false);
   }, [user]);
 
@@ -365,6 +368,16 @@ export default function Settings() {
     setSavingRecentInputsScope(true);
     await supabase.from('profile').update({ recent_inputs_scope: next }).eq('id', user.id);
     setSavingRecentInputsScope(false);
+  }
+
+  /** 3–24, matching the schema's check constraint. */
+  async function changeRecentInputsCategoryChars(next: number) {
+    if (!user) return;
+    const clamped = Math.min(24, Math.max(3, next));
+    setRecentInputsCategoryChars(clamped);
+    setSavingRecentInputsCategoryChars(true);
+    await supabase.from('profile').update({ recent_inputs_category_chars: clamped }).eq('id', user.id);
+    setSavingRecentInputsCategoryChars(false);
   }
 
   function removeAmountButton(value: number) {
@@ -909,7 +922,7 @@ export default function Settings() {
                     </Pressable>
                   </View>
                 </View>
-                <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border, marginBottom: 10 }]}>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
                       {t('more.recentInputsScopeLabel')}
@@ -924,6 +937,35 @@ export default function Settings() {
                       {recentInputsScope === 'all' ? t('more.recentInputsScopeAll') : t('more.recentInputsScopeCategory')}
                     </Text>
                   </Pressable>
+                </View>
+                <View style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 14 }}>
+                      {t('more.recentInputsCategoryCharsLabel')}
+                    </Text>
+                    <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 2 }}>
+                      {t('more.recentInputsCategoryCharsHint')}
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Pressable
+                      onPress={() => changeRecentInputsCategoryChars(recentInputsCategoryChars - 1)}
+                      disabled={savingRecentInputsCategoryChars || recentInputsCategoryChars <= 3}
+                      style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: recentInputsCategoryChars <= 3 ? 0.4 : 1 }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>−</Text>
+                    </Pressable>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 14, width: 20, textAlign: 'center' }}>
+                      {recentInputsCategoryChars}
+                    </Text>
+                    <Pressable
+                      onPress={() => changeRecentInputsCategoryChars(recentInputsCategoryChars + 1)}
+                      disabled={savingRecentInputsCategoryChars || recentInputsCategoryChars >= 24}
+                      style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, opacity: recentInputsCategoryChars >= 24 ? 0.4 : 1 }]}
+                    >
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>+</Text>
+                    </Pressable>
+                  </View>
                 </View>
               </>
             )}
