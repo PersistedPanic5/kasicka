@@ -43,7 +43,10 @@ export type TransactionType =
   | 'PAYMENT_FROM_RESERVE'
   | 'DEBT_SETTLEMENT_CREDIT';
 export type TransactionStatus = 'PAID' | 'VOID';
-export type TransactionSource = 'MANUAL' | 'RECURRING' | 'LONG_TERM_QR' | 'DEBT_SETTLEMENT';
+/** MANUAL_PAYMENT added in 0014_manual_payments.sql — a one-off Payments →
+ * ad-hoc payment confirmed paid, distinct from a plain Record-Expense
+ * MANUAL entry (see lib/manual-payments.ts). */
+export type TransactionSource = 'MANUAL' | 'RECURRING' | 'LONG_TERM_QR' | 'DEBT_SETTLEMENT' | 'MANUAL_PAYMENT';
 export type RecurringFrequency = 'MONTHLY' | 'YEARLY';
 export type ReserveAmountMode = 'AUTO' | 'MANUAL';
 /** MERGED added in 0011_debts_merge_supersede.sql — set on a debt that got
@@ -200,6 +203,43 @@ export interface LongTermItem {
 export type LongTermItemInsert = Partial<LongTermItem> &
   Pick<LongTermItem, 'owner_id' | 'name' | 'category_id' | 'full_payment_amount' | 'payment_month' | 'first_reserve_month' | 'reserve_amount_mode'>;
 export type LongTermItemUpdate = Partial<LongTermItem>;
+
+/** Someone Pavel has paid via Payments → one-off payment — see migration
+ * 0014 and lib/manual-payments.ts. Matched/reused by bank account, not by
+ * name (findOrCreatePayee), so paying the same account again lands on the
+ * same person instead of creating a duplicate. */
+export interface Payee {
+  id: string;
+  owner_id: string;
+  name: string;
+  target_account_prefix: string | null;
+  target_account_number: string;
+  target_bank_code: string;
+  last_paid_at: string | null;
+  created_at: string;
+}
+export type PayeeInsert = Partial<Payee> &
+  Pick<Payee, 'owner_id' | 'name' | 'target_account_number' | 'target_bank_code'>;
+export type PayeeUpdate = Partial<Payee>;
+
+/** A one-off payment still waiting to be confirmed paid. Deliberately no
+ * "paid" state of its own — confirming deletes this row and posts a real
+ * `transactions` row instead (source MANUAL_PAYMENT), which is the
+ * permanent record from then on. */
+export interface ManualPayment {
+  id: string;
+  owner_id: string;
+  payee_id: string;
+  category_id: string;
+  account_id: string;
+  amount: number;
+  message: string | null;
+  variable_symbol: string | null;
+  created_at: string;
+}
+export type ManualPaymentInsert = Partial<ManualPayment> &
+  Pick<ManualPayment, 'owner_id' | 'payee_id' | 'category_id' | 'account_id' | 'amount'>;
+export type ManualPaymentUpdate = Partial<ManualPayment>;
 
 /** Snapshot of one debt row folded into a merged debt — enough to
  * recreate that row exactly if the merge is later undone via "Unmerge" on

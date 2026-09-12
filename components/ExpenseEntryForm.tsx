@@ -179,15 +179,16 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       setRecentInputs([]);
       return;
     }
-    // source: 'MANUAL' — only entries actually typed in here (or on
-    // Transactions' own "add"), not recurring/long-term auto-generated
+    // source in (MANUAL, MANUAL_PAYMENT) — entries actually typed in
+    // somewhere by hand (here, Transactions' own "add", or confirming a
+    // Payments → one-off payment), not recurring/long-term auto-generated
     // rows, which isn't what Pavel meant by "what have I already input".
     let query = supabase
       .from('transactions')
       .select('id, amount, type, note, category_id, transaction_date')
       .eq('owner_id', user.id)
       .eq('status', 'PAID')
-      .eq('source', 'MANUAL')
+      .in('source', ['MANUAL', 'MANUAL_PAYMENT'])
       .order('created_at', { ascending: false })
       .limit(recentInputsCount);
     if (recentInputsCategoryFilter) query = query.eq('category_id', recentInputsCategoryFilter);
