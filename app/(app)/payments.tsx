@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import QRCode from 'react-native-qrcode-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
@@ -18,7 +18,8 @@ import {
   type LongTermTx,
 } from '@/lib/long-term';
 import { confirmManualPayment, findOrCreatePayee, manualPaymentQrPayload } from '@/lib/manual-payments';
-import type { Account, Category, LongTermItem, ManualPayment, Payee } from '@/types/database';
+import { LongTermForm } from '@/components/LongTermForm';
+import type { Account, Category, LongTermItem, ManualPayment, Payee, ReserveAmountMode } from '@/types/database';
 
 /**
  * Payments — a month-scoped, paid/unpaid view of every long-term & reserve
@@ -91,6 +92,30 @@ export default function Payments() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [openManualQrId, setOpenManualQrId] = useState<string | null>(null);
   const [confirmingManualId, setConfirmingManualId] = useState<string | null>(null);
+  const [editingManualPaymentId, setEditingManualPaymentId] = useState<string | null>(null);
+
+  // ── Long-term item edit (Pavel: "add edit button and window for standard
+  // payments... quick correction instead of deleting and/or recreating" —
+  // same fields/state shape as planning.tsx's own add/edit form, reusing
+  // the extracted components/LongTermForm.tsx). ──────────────────────────
+  const [editingLongTerm, setEditingLongTerm] = useState<LongTermItem | null>(null);
+  const [editingLongTermSaving, setEditingLongTermSaving] = useState(false);
+  const [editingLongTermError, setEditingLongTermError] = useState<string | null>(null);
+  const [ltName, setLtName] = useState('');
+  const [ltCategoryId, setLtCategoryId] = useState<string | null>(null);
+  const [ltFullAmount, setLtFullAmount] = useState('');
+  const [ltPaymentMonth, setLtPaymentMonth] = useState('');
+  const [ltFirstReserveMonth, setLtFirstReserveMonth] = useState('');
+  const [ltMode, setLtMode] = useState<ReserveAmountMode>('AUTO');
+  const [ltManualReserve, setLtManualReserve] = useState('');
+  const [ltOpeningBalance, setLtOpeningBalance] = useState('0');
+  const [ltRepeatYearly, setLtRepeatYearly] = useState(true);
+  const [ltReserveAccountId, setLtReserveAccountId] = useState<string | null>(null);
+  const [ltTargetPrefix, setLtTargetPrefix] = useState('');
+  const [ltTargetNumber, setLtTargetNumber] = useState('');
+  const [ltTargetBankCode, setLtTargetBankCode] = useState('');
+  const [ltVariableSymbol, setLtVariableSymbol] = useState('');
+  const [ltPaymentMessage, setLtPaymentMessage] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -203,6 +228,82 @@ export default function Payments() {
     }
   }
 
+  function validMonthInput(v: string): boolean {
+    return /^\d{4}-\d{2}$/.test(v.trim());
+  }
+
+  function openEditLongTerm(item: LongTermItem) {
+    setEditingLongTerm(item);
+    setLtName(item.name);
+    setLtCategoryId(item.category_id);
+    setLtFullAmount(String(item.full_payment_amount));
+    setLtPaymentMonth(item.payment_month.slice(0, 7));
+    setLtFirstReserveMonth(item.first_reserve_month.slice(0, 7));
+    setLtMode(item.reserve_amount_mode);
+    setLtManualReserve(item.manual_monthly_reserve ? String(item.manual_monthly_reserve) : '');
+    setLtOpeningBalance(String(item.opening_reserve_balance));
+    setLtRepeatYearly(item.repeat_yearly);
+    setLtReserveAccountId(item.reserve_account_id);
+    setLtTargetPrefix(item.target_account_prefix ?? '');
+    setLtTargetNumber(item.target_account_number ?? '');
+    setLtTargetBankCode(item.target_bank_code ?? '');
+    setLtVariableSymbol(item.variable_symbol ?? '');
+    setLtPaymentMessage(item.payment_message ?? '');
+    setEditingLongTermError(null);
+  }
+
+  function closeEditLongTerm() {
+    setEditingLongTerm(null);
+    setEditingLongTermSaving(false);
+    setEditingLongTermError(null);
+  }
+
+  async function saveEditLongTerm() {
+    if (!editingLongTerm) return;
+    if (!ltName.trim() || !ltCategoryId) {
+      setEditingLongTermError(t('more.longTermFieldsError'));
+      return;
+    }
+    const fullAmount = Number(ltFullAmount);
+    if (!fullAmount || fullAmount <= 0) {
+      setEditingLongTermError(t('more.longTermAmountError'));
+      return;
+    }
+    if (!validMonthInput(ltPaymentMonth) || !validMonthInput(ltFirstReserveMonth)) {
+      setEditingLongTermError(t('more.longTermMonthError'));
+      return;
+    }
+    setEditingLongTermSaving(true);
+    const { error } = await supabase
+      .from('long_term_items')
+      .update({
+        name: ltName.trim(),
+        category_id: ltCategoryId,
+        full_payment_amount: fullAmount,
+        payment_month: `${ltPaymentMonth.trim()}-01`,
+        first_reserve_month: `${ltFirstReserveMonth.trim()}-01`,
+        reserve_amount_mode: ltMode,
+        manual_monthly_reserve: ltMode === 'MANUAL' ? Number(ltManualReserve) || 0 : null,
+        opening_reserve_balance: Number(ltOpeningBalance) || 0,
+        repeat_yearly: ltRepeatYearly,
+        reserve_account_id: ltReserveAccountId,
+        target_account_prefix: ltTargetPrefix.trim() || null,
+        target_account_number: ltTargetNumber.trim() || null,
+        target_bank_code: ltTargetBankCode.trim() || null,
+        variable_symbol: ltVariableSymbol.trim() || null,
+        payment_message: ltPaymentMessage.trim() || null,
+      })
+      .eq('id', editingLongTerm.id);
+
+    setEditingLongTermSaving(false);
+    if (error) {
+      setEditingLongTermError(error.message);
+      return;
+    }
+    closeEditLongTerm();
+    load();
+  }
+
   const payeeById = useMemo(() => new Map(payees.map((p) => [p.id, p])), [payees]);
   // Most-recently-paid first; a payee who's never actually been confirmed
   // paid yet (last_paid_at still null) sorts to the end rather than the
@@ -213,6 +314,7 @@ export default function Payments() {
   );
 
   function openNewPaymentForm(payee?: Payee) {
+    setEditingManualPaymentId(null);
     setPayeeName(payee?.name ?? '');
     setPayeePrefix(payee?.target_account_prefix ?? '');
     setPayeeAccountNumber(payee?.target_account_number ?? '');
@@ -226,7 +328,33 @@ export default function Payments() {
     setShowPaymentForm(true);
   }
 
-  async function submitNewPayment() {
+  // Quick correction for an existing one-off payment (Pavel: "instead of
+  // deleting and/or recreating/reusing") — reuses the same form/state as
+  // "New payment" rather than a second copy, branching submitPaymentForm
+  // to UPDATE instead of INSERT.
+  function openEditManualPayment(payment: ManualPayment) {
+    const payee = payeeById.get(payment.payee_id);
+    setEditingManualPaymentId(payment.id);
+    setPayeeName(payee?.name ?? '');
+    setPayeePrefix(payee?.target_account_prefix ?? '');
+    setPayeeAccountNumber(payee?.target_account_number ?? '');
+    setPayeeBankCode(payee?.target_bank_code ?? '');
+    setPaymentAmount(String(payment.amount));
+    setPaymentMessage(payment.message ?? '');
+    setPaymentVariableSymbol(payment.variable_symbol ?? '');
+    setPaymentCategoryId(payment.category_id);
+    setPaymentAccountId(payment.account_id);
+    setPaymentError(null);
+    setShowPaymentForm(true);
+  }
+
+  function closePaymentForm() {
+    setShowPaymentForm(false);
+    setEditingManualPaymentId(null);
+    setPaymentError(null);
+  }
+
+  async function submitPaymentForm() {
     if (!user) return;
     const amount = Number(paymentAmount);
     if (
@@ -243,6 +371,9 @@ export default function Payments() {
     }
     setSavingPayment(true);
     setPaymentError(null);
+    // Re-resolve the payee every time (add or edit) — bank details may
+    // have changed during an edit, and findOrCreatePayee already dedupes
+    // by account rather than name.
     const { id: payeeId, error: payeeError } = await findOrCreatePayee(
       user.id,
       payeeName.trim(),
@@ -255,21 +386,23 @@ export default function Payments() {
       setSavingPayment(false);
       return;
     }
-    const { error } = await supabase.from('manual_payments').insert({
-      owner_id: user.id,
+    const fields = {
       payee_id: payeeId,
       category_id: paymentCategoryId,
       account_id: paymentAccountId,
       amount,
       message: paymentMessage.trim() || null,
       variable_symbol: paymentVariableSymbol.trim() || null,
-    });
+    };
+    const { error } = editingManualPaymentId
+      ? await supabase.from('manual_payments').update(fields).eq('id', editingManualPaymentId)
+      : await supabase.from('manual_payments').insert({ owner_id: user.id, ...fields });
     setSavingPayment(false);
     if (error) {
       setPaymentError(error.message);
       return;
     }
-    setShowPaymentForm(false);
+    closePaymentForm();
     load();
   }
 
@@ -365,14 +498,24 @@ export default function Payments() {
               )}
 
               {!open ? (
-                <Pressable
-                  onPress={() => setOpenQrItemId(item.id)}
-                  style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, marginTop: 10, alignSelf: 'flex-start' }]}
-                >
-                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
-                    {t('payments.viewQr')}
-                  </Text>
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                  <Pressable
+                    onPress={() => setOpenQrItemId(item.id)}
+                    style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                      {t('payments.viewQr')}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openEditLongTerm(item)}
+                    style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                      {t('common.edit')}
+                    </Text>
+                  </Pressable>
+                </View>
               ) : (
                 <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
                   {qrPayload ? (
@@ -545,15 +688,15 @@ export default function Payments() {
 
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
             <Pressable
-              onPress={submitNewPayment}
+              onPress={submitPaymentForm}
               disabled={savingPayment}
               style={[styles.smallBtn, { backgroundColor: tokens.accent, opacity: savingPayment ? 0.6 : 1 }]}
             >
               <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
-                {t('payments.createPaymentBtn')}
+                {editingManualPaymentId ? t('common.save') : t('payments.createPaymentBtn')}
               </Text>
             </Pressable>
-            <Pressable onPress={() => setShowPaymentForm(false)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+            <Pressable onPress={closePaymentForm} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
               <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                 {t('common.cancel')}
               </Text>
@@ -593,14 +736,24 @@ export default function Payments() {
               </View>
 
               {!open ? (
-                <Pressable
-                  onPress={() => setOpenManualQrId(payment.id)}
-                  style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, marginTop: 10, alignSelf: 'flex-start' }]}
-                >
-                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
-                    {t('payments.viewQr')}
-                  </Text>
-                </Pressable>
+                <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+                  <Pressable
+                    onPress={() => setOpenManualQrId(payment.id)}
+                    style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                      {t('payments.viewQr')}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openEditManualPayment(payment)}
+                    style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                  >
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                      {t('common.edit')}
+                    </Text>
+                  </Pressable>
+                </View>
               ) : (
                 <View style={{ marginTop: 12, alignItems: 'flex-start' }}>
                   {qrPayload ? (
@@ -675,6 +828,60 @@ export default function Payments() {
           </View>
         ))
       )}
+
+      <Modal visible={editingLongTerm !== null} transparent animationType="fade" onRequestClose={closeEditLongTerm}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border, maxHeight: '90%' }]}>
+            <ScrollView>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 14 }}>
+                {t('more.editLongTermTitle')}
+              </Text>
+              <LongTermForm
+                mode="edit"
+                embedded
+                tokens={tokens}
+                t={t}
+                categories={categories}
+                accounts={accounts}
+                ltName={ltName}
+                setLtName={setLtName}
+                ltCategoryId={ltCategoryId}
+                setLtCategoryId={setLtCategoryId}
+                ltFullAmount={ltFullAmount}
+                setLtFullAmount={setLtFullAmount}
+                ltPaymentMonth={ltPaymentMonth}
+                setLtPaymentMonth={setLtPaymentMonth}
+                ltFirstReserveMonth={ltFirstReserveMonth}
+                setLtFirstReserveMonth={setLtFirstReserveMonth}
+                ltMode={ltMode}
+                setLtMode={setLtMode}
+                ltManualReserve={ltManualReserve}
+                setLtManualReserve={setLtManualReserve}
+                ltOpeningBalance={ltOpeningBalance}
+                setLtOpeningBalance={setLtOpeningBalance}
+                ltRepeatYearly={ltRepeatYearly}
+                setLtRepeatYearly={setLtRepeatYearly}
+                ltReserveAccountId={ltReserveAccountId}
+                setLtReserveAccountId={setLtReserveAccountId}
+                ltTargetPrefix={ltTargetPrefix}
+                setLtTargetPrefix={setLtTargetPrefix}
+                ltTargetNumber={ltTargetNumber}
+                setLtTargetNumber={setLtTargetNumber}
+                ltTargetBankCode={ltTargetBankCode}
+                setLtTargetBankCode={setLtTargetBankCode}
+                ltVariableSymbol={ltVariableSymbol}
+                setLtVariableSymbol={setLtVariableSymbol}
+                ltPaymentMessage={ltPaymentMessage}
+                setLtPaymentMessage={setLtPaymentMessage}
+                error={editingLongTermError}
+                onCancel={closeEditLongTerm}
+                onSave={saveEditLongTerm}
+                saving={editingLongTermSaving}
+              />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -718,5 +925,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     marginBottom: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 440,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 20,
   },
 });
