@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
@@ -7,6 +7,7 @@ import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
 import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
 import { categoryColor } from '@/lib/identity';
+import { TransactionList, type TransactionRow } from '@/components/TransactionList';
 import type { Category } from '@/types/database';
 
 type CategoryRow = Pick<Category, 'id' | 'name' | 'default_monthly_budget'>;
@@ -51,6 +52,14 @@ export default function Overview() {
   const [editingAll, setEditingAll] = useState(false);
   const [budgetDraftsAll, setBudgetDraftsAll] = useState<Record<string, string>>({});
   const [savingAll, setSavingAll] = useState(false);
+
+  // ── Per-category drill-down (Pavel: "every category clickable... show
+  // list of transactions at the selected period" — reuses the exact same
+  // list/edit/delete/split UI as Transactions, via components/
+  // TransactionList.tsx, rather than a second copy of that design). ─────
+  const [drillDownCategory, setDrillDownCategory] = useState<CategoryRow | null>(null);
+  const [drillDownTransactions, setDrillDownTransactions] = useState<TransactionRow[]>([]);
+  const [drillDownLoading, setDrillDownLoading] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -140,6 +149,45 @@ export default function Overview() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const loadDrillDown = useCallback(
+    async (cat: CategoryRow) => {
+      if (!user || !budgetMonth) return;
+      setDrillDownLoading(true);
+      const { data } = await supabase
+        .from('transactions')
+        .select(
+          'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
+        )
+        .eq('owner_id', user.id)
+        .eq('budget_month', budgetMonth)
+        .eq('category_id', cat.id)
+        .eq('status', 'PAID')
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      setDrillDownTransactions((data as unknown as TransactionRow[]) ?? []);
+      setDrillDownLoading(false);
+    },
+    [user, budgetMonth]
+  );
+
+  function openCategoryDrillDown(cat: CategoryRow) {
+    setDrillDownCategory(cat);
+    loadDrillDown(cat);
+  }
+
+  function closeCategoryDrillDown() {
+    setDrillDownCategory(null);
+    setDrillDownTransactions([]);
+  }
+
+  // A split/edit/delete inside the drill-down can change this category's
+  // actual spend, so both the drill-down's own list AND Overview's totals/
+  // bars need a fresh fetch — not just one or the other.
+  async function handleDrillDownChanged() {
+    if (drillDownCategory) await loadDrillDown(drillDownCategory);
+    load();
+  }
 
   function plannedFor(cat: CategoryRow): number {
     return plannedByCategory[cat.id] ?? cat.default_monthly_budget ?? 0;
@@ -308,7 +356,15 @@ export default function Overview() {
                   // row — the over-budget caption is the one thing the
                   // mockup didn't need to show, so it stays as a second
                   // line inside the same card rather than being dropped.
-                  <View key={cat.id} style={[styles.budgetCard, { backgroundColor: tokens.card }]}>
+                  // Tappable to drill into that category's transactions
+                  // for this month (Pavel's request) — disabled while
+                  // editing budgets so it doesn't fight the number inputs.
+                  <Pressable
+                    key={cat.id}
+                    disabled={editingAll}
+                    onPress={() => openCategoryDrillDown(cat)}
+                    style={[styles.budgetCard, { backgroundColor: tokens.card }]}
+                  >
                     <View style={styles.budgetRow}>
                       {/* Category identity color — design refresh (2026-09):
                           wires up tokens.category (defined, never used
@@ -375,13 +431,37 @@ export default function Overview() {
                         {actual - planned} {t('common.czk')} {t('overview.overBudget')}
                       </Text>
                     )}
-                  </View>
+                  </Pressable>
                 );
               })}
             </View>
           )}
         </>
       )}
+
+      <Modal visible={drillDownCategory !== null} transparent animationType="fade" onRequestClose={closeCategoryDrillDown}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border, maxHeight: '85%' }]}>
+            <View style={styles.drillDownHeader}>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16 }}>
+                {drillDownCategory?.name} · {monthLabel}
+              </Text>
+              <Pressable onPress={closeCategoryDrillDown}>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13 }}>{t('common.close')}</Text>
+              </Pressable>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 12 }}>
+              <TransactionList
+                transactions={drillDownTransactions}
+                categories={categories}
+                loading={drillDownLoading}
+                emptyMessage={t('transactions.noneYet')}
+                onChanged={handleDrillDownChanged}
+              />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -408,4 +488,19 @@ const styles = StyleSheet.create({
   barFill: { height: 10, borderRadius: 5 },
   budgetEditSlot: { flexDirection: 'row', alignItems: 'center', gap: 6, flexBasis: 148, flexShrink: 0, justifyContent: 'flex-end' },
   budgetInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 80, textAlign: 'right' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 440,
+    borderRadius: 18,
+    borderWidth: 1,
+    padding: 20,
+  },
+  drillDownHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
 });

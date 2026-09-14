@@ -107,6 +107,14 @@ export function useAppData(): AppData {
       ]);
 
       if (cancelled) return;
+      // A missing column here (e.g. a not-yet-applied migration) makes
+      // PostgREST fail this whole select — profileRes.data then comes back
+      // null and every field below silently falls back to "still loading"
+      // defaults, which used to look exactly like a real "not set up yet"
+      // state with zero clue why. Log it so that's diagnosable.
+      if (profileRes.error) console.warn('[use-app-data] Failed to load profile', profileRes.error);
+      if (categoriesRes.error) console.warn('[use-app-data] Failed to load categories', categoriesRes.error);
+      if (accountsRes.error) console.warn('[use-app-data] Failed to load accounts', accountsRes.error);
       setDefaultAccountId(profileRes.data?.default_account_id ?? null);
       setMonthStartDay(profileRes.data?.month_start_day ?? 1);
       setAmountButtons(
