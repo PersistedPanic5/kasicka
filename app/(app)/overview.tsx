@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
@@ -11,6 +12,20 @@ import { TransactionList, type TransactionRow } from '@/components/TransactionLi
 import type { Category } from '@/types/database';
 
 type CategoryRow = Pick<Category, 'id' | 'name' | 'default_monthly_budget'>;
+
+/** Same rotating-chevron affordance as Settings' collapsible sections
+ * (app/(app)/settings.tsx's Section component) — reused here by eye rather
+ * than import, since it's a 6-line stateless icon and the two screens
+ * otherwise share nothing. */
+function ChevronIcon({ expanded, color }: { expanded: boolean; color: string }) {
+  return (
+    <View style={{ transform: [{ rotate: expanded ? '180deg' : '0deg' }] }}>
+      <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+        <Path d="M6 9l6 6 6-6" />
+      </Svg>
+    </View>
+  );
+}
 
 /**
  * Overview — build-roadmap-v1.md Phase 1: month switcher, income/spent/net
@@ -56,10 +71,16 @@ export default function Overview() {
   // ── Per-category drill-down (Pavel: "every category clickable... show
   // list of transactions at the selected period" — reuses the exact same
   // list/edit/delete/split UI as Transactions, via components/
-  // TransactionList.tsx, rather than a second copy of that design). ─────
-  const [drillDownCategory, setDrillDownCategory] = useState<CategoryRow | null>(null);
-  const [drillDownTransactions, setDrillDownTransactions] = useState<TransactionRow[]>([]);
-  const [drillDownLoading, setDrillDownLoading] = useState(false);
+  // TransactionList.tsx, rather than a second copy of that design).
+  // Inline expand/collapse per category — same interaction as Settings'
+  // collapsible sections (Pavel: "uncover the list... in the same width
+  // and on the page. Kind of like design of settings page") — rather than
+  // a modal, and more than one category can be open at a time, same as
+  // Settings. Each expanded category keeps its own cached transaction
+  // list, cleared whenever the selected month changes. ──────────────────
+  const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(new Set());
+  const [categoryTx, setCategoryTx] = useState<Record<string, TransactionRow[]>>({});
+  const [categoryTxLoading, setCategoryTxLoading] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!user) return;
@@ -150,10 +171,19 @@ export default function Overview() {
     load();
   }, [load]);
 
-  const loadDrillDown = useCallback(
+  // A different month means a different set of transactions per category —
+  // collapse everything and drop the cache rather than show last month's
+  // rows under this month's category.
+  useEffect(() => {
+    setExpandedCategoryIds(new Set());
+    setCategoryTx({});
+    setCategoryTxLoading({});
+  }, [budgetMonth]);
+
+  const loadCategoryTx = useCallback(
     async (cat: CategoryRow) => {
       if (!user || !budgetMonth) return;
-      setDrillDownLoading(true);
+      setCategoryTxLoading((prev) => ({ ...prev, [cat.id]: true }));
       const { data } = await supabase
         .from('transactions')
         .select(
@@ -165,27 +195,27 @@ export default function Overview() {
         .eq('status', 'PAID')
         .order('transaction_date', { ascending: false })
         .order('created_at', { ascending: false });
-      setDrillDownTransactions((data as unknown as TransactionRow[]) ?? []);
-      setDrillDownLoading(false);
+      setCategoryTx((prev) => ({ ...prev, [cat.id]: (data as unknown as TransactionRow[]) ?? [] }));
+      setCategoryTxLoading((prev) => ({ ...prev, [cat.id]: false }));
     },
     [user, budgetMonth]
   );
 
-  function openCategoryDrillDown(cat: CategoryRow) {
-    setDrillDownCategory(cat);
-    loadDrillDown(cat);
+  function toggleCategory(cat: CategoryRow) {
+    setExpandedCategoryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat.id)) next.delete(cat.id);
+      else next.add(cat.id);
+      return next;
+    });
+    if (!categoryTx[cat.id]) loadCategoryTx(cat);
   }
 
-  function closeCategoryDrillDown() {
-    setDrillDownCategory(null);
-    setDrillDownTransactions([]);
-  }
-
-  // A split/edit/delete inside the drill-down can change this category's
-  // actual spend, so both the drill-down's own list AND Overview's totals/
-  // bars need a fresh fetch — not just one or the other.
-  async function handleDrillDownChanged() {
-    if (drillDownCategory) await loadDrillDown(drillDownCategory);
+  // A split/edit/delete inside an expanded category can change its actual
+  // spend, so both that category's own list AND Overview's totals/bars
+  // need a fresh fetch — not just one or the other.
+  async function handleCategoryTxChanged(cat: CategoryRow) {
+    await loadCategoryTx(cat);
     load();
   }
 
@@ -348,6 +378,8 @@ export default function Overview() {
                 const over = planned > 0 && actual > planned;
                 const shareOfTotal = totalPlanned > 0 ? Math.round((planned / totalPlanned) * 100) : 0;
 
+                const expanded = expandedCategoryIds.has(cat.id);
+
                 return (
                   // Restructured to match Overview.dc.html's actual row
                   // shape (Pavel: "the same goes for overview... redo it"):
@@ -356,16 +388,15 @@ export default function Overview() {
                   // row — the over-budget caption is the one thing the
                   // mockup didn't need to show, so it stays as a second
                   // line inside the same card rather than being dropped.
-                  // Tappable to drill into that category's transactions
-                  // for this month (Pavel's request) — disabled while
-                  // editing budgets so it doesn't fight the number inputs.
-                  <Pressable
-                    key={cat.id}
-                    disabled={editingAll}
-                    onPress={() => openCategoryDrillDown(cat)}
-                    style={[styles.budgetCard, { backgroundColor: tokens.card }]}
-                  >
-                    <View style={styles.budgetRow}>
+                  //
+                  // Tapping the row uncovers that category's transactions
+                  // for this month right here, full-width, below the bar —
+                  // same expand/collapse feel as Settings' collapsible
+                  // sections (Pavel: "kind of like design of settings
+                  // page"), not a popup — disabled while editing budgets so
+                  // it doesn't fight the number inputs.
+                  <View key={cat.id} style={[styles.budgetCard, { backgroundColor: tokens.card }]}>
+                    <Pressable disabled={editingAll} onPress={() => toggleCategory(cat)} style={styles.budgetRow}>
                       {/* Category identity color — design refresh (2026-09):
                           wires up tokens.category (defined, never used
                           before) so categories are distinguishable at a
@@ -404,64 +435,54 @@ export default function Overview() {
                           </Text>
                         </View>
                       ) : (
-                        <Text
-                          numberOfLines={1}
-                          style={{
-                            color: tokens.textMuted,
-                            fontFamily: fontFamily.medium,
-                            fontSize: 12.5,
-                            fontVariant: ['tabular-nums'],
-                            flexBasis: 148,
-                            flexShrink: 0,
-                            textAlign: 'right',
-                          }}
-                        >
-                          {actual} / {planned} {t('common.czk')}
-                          {totalPlanned > 0 && (
-                            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11 }}>
-                              {'\n'}
-                              {shareOfTotal}% {t('overview.ofTotal')}
-                            </Text>
-                          )}
-                        </Text>
+                        <>
+                          <Text
+                            numberOfLines={1}
+                            style={{
+                              color: tokens.textMuted,
+                              fontFamily: fontFamily.medium,
+                              fontSize: 12.5,
+                              fontVariant: ['tabular-nums'],
+                              flexBasis: 148,
+                              flexShrink: 0,
+                              textAlign: 'right',
+                            }}
+                          >
+                            {actual} / {planned} {t('common.czk')}
+                            {totalPlanned > 0 && (
+                              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11 }}>
+                                {'\n'}
+                                {shareOfTotal}% {t('overview.ofTotal')}
+                              </Text>
+                            )}
+                          </Text>
+                          <ChevronIcon expanded={expanded} color={tokens.textMuted} />
+                        </>
                       )}
-                    </View>
+                    </Pressable>
                     {over && (
                       <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 6 }}>
                         {actual - planned} {t('common.czk')} {t('overview.overBudget')}
                       </Text>
                     )}
-                  </Pressable>
+                    {expanded && !editingAll && (
+                      <View style={{ marginTop: 12 }}>
+                        <TransactionList
+                          transactions={categoryTx[cat.id] ?? []}
+                          categories={categories}
+                          loading={categoryTxLoading[cat.id] ?? false}
+                          emptyMessage={t('transactions.noneYet')}
+                          onChanged={() => handleCategoryTxChanged(cat)}
+                        />
+                      </View>
+                    )}
+                  </View>
                 );
               })}
             </View>
           )}
         </>
       )}
-
-      <Modal visible={drillDownCategory !== null} transparent animationType="fade" onRequestClose={closeCategoryDrillDown}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border, maxHeight: '85%' }]}>
-            <View style={styles.drillDownHeader}>
-              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16 }}>
-                {drillDownCategory?.name} · {monthLabel}
-              </Text>
-              <Pressable onPress={closeCategoryDrillDown}>
-                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13 }}>{t('common.close')}</Text>
-              </Pressable>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 12 }}>
-              <TransactionList
-                transactions={drillDownTransactions}
-                categories={categories}
-                loading={drillDownLoading}
-                emptyMessage={t('transactions.noneYet')}
-                onChanged={handleDrillDownChanged}
-              />
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
 }
@@ -488,19 +509,4 @@ const styles = StyleSheet.create({
   barFill: { height: 10, borderRadius: 5 },
   budgetEditSlot: { flexDirection: 'row', alignItems: 'center', gap: 6, flexBasis: 148, flexShrink: 0, justifyContent: 'flex-end' },
   budgetInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 80, textAlign: 'right' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  modalCard: {
-    width: '100%',
-    maxWidth: 440,
-    borderRadius: 18,
-    borderWidth: 1,
-    padding: 20,
-  },
-  drillDownHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
 });
