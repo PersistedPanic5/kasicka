@@ -157,7 +157,12 @@ export function useDebtHistory(): DebtHistory {
 
 export interface CreateOrMergeDebtsParams {
   ownerId: string;
-  transactionId: string;
+  /** Null for an event-level split (claude/event-based-expenses-v1.md) —
+   * same reasoning as a merge: one combined amount not honestly
+   * attributable to a single transaction. Pass `eventId` in that case so
+   * the debt can still say which event it came from. */
+  transactionId: string | null;
+  eventId?: string | null;
   targetAccountId: string;
   message: string | null;
   people: { name: string; amount: number }[];
@@ -217,6 +222,7 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
           // points at neither (same reasoning as the Debts page's manual
           // merge -- see supabase/migrations/0009_debts_merge_support.sql).
           transaction_id: null,
+          event_id: params.eventId ?? null,
           owed_by_name: existing.owed_by_name,
           amount: mergedAmount,
           target_account_id: params.targetAccountId,
@@ -266,6 +272,7 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
       .insert({
         owner_id: params.ownerId,
         transaction_id: params.transactionId,
+        event_id: params.eventId ?? null,
         owed_by_name: person.name,
         amount: person.amount,
         target_account_id: params.targetAccountId,

@@ -60,8 +60,22 @@ export default function MobileFastEntry() {
             Save button below the fold. showsVerticalScrollIndicator={false}
             (Pavel: no visible scrollbar on this screen) keeps this looking
             like a plain card rather than growing a scrollbar down one side
-            of it — react-native-web still scrolls fine with it hidden. */}
-        <ScrollView style={styles.formScroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.formWrap}>
+            of it — react-native-web still scrolls fine with it hidden.
+            keyboardShouldPersistTaps="handled" (default is "never") is the
+            actual fix for Pavel's "currency badge — hover shows a button,
+            click does nothing": with the amount TextInput focused (the
+            normal flow is type amount, then tap the currency), a
+            ScrollView's default behavior swallows the very next tap on a
+            sibling to dismiss the keyboard/blur first, instead of passing
+            it to that sibling's onPress. "handled" lets a tap that lands on
+            a real touchable (the currency Pressable) fire normally instead
+            of being eaten for the dismiss. */}
+        <ScrollView
+          style={styles.formScroll}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.formWrap}
+          keyboardShouldPersistTaps="handled"
+        >
           <ExpenseEntryForm variant="mobile" />
         </ScrollView>
 

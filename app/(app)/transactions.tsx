@@ -10,6 +10,7 @@ import { useLanguage } from '@/lib/language-context';
 import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
 import { categoryColor } from '@/lib/identity';
 import { categoryOrTypeLabel, TransactionList, type TransactionRow } from '@/components/TransactionList';
+import type { EventRow } from '@/types/database';
 
 type TypeFilter = 'ALL' | 'EXPENSE' | 'INCOME' | 'OTHER';
 
@@ -40,6 +41,22 @@ export default function Transactions() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
+  // All events, not just active ones — an archived event still needs to be
+  // filterable forever (claude/event-based-expenses-v1.md), so this can't
+  // reuse useAppData's activeEvents.
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [eventFilter, setEventFilter] = useState<string>('ALL');
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('events')
+      .select('*')
+      .eq('owner_id', user.id)
+      .order('active', { ascending: false })
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setEvents(data ?? []));
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -69,18 +86,21 @@ export default function Transactions() {
   const load = useCallback(async () => {
     if (!budgetMonth) return;
     setLoading(true);
-    const { data } = await supabase
+    let query = supabase
       .from('transactions')
       .select(
         'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
       )
-      .eq('status', 'PAID')
-      .eq('budget_month', budgetMonth)
-      .order('transaction_date', { ascending: false })
-      .order('created_at', { ascending: false });
+      .eq('status', 'PAID');
+    // A specific event bypasses the month scope entirely and shows every
+    // transaction ever tagged with it (claude/event-based-expenses-v1.md:
+    // a trip spanning a month boundary shouldn't quietly cut off at
+    // midnight on the 1st) — "All" goes back to normal month-scoped browsing.
+    query = eventFilter === 'ALL' ? query.eq('budget_month', budgetMonth) : query.eq('event_id', eventFilter);
+    const { data } = await query.order('transaction_date', { ascending: false }).order('created_at', { ascending: false });
     setTransactions((data as unknown as TransactionRow[]) ?? []);
     setLoading(false);
-  }, [budgetMonth]);
+  }, [budgetMonth, eventFilter]);
 
   useEffect(() => {
     load();
@@ -111,10 +131,17 @@ export default function Transactions() {
     { id: 'ALL', name: tr('transactions.filterAll'), colorIndex: -1 },
     ...categories.map((c, i) => ({ id: c.id, name: c.name, colorIndex: i })),
   ];
+  const eventFilters = [{ id: 'ALL', name: tr('transactions.filterAll') }, ...events.map((e) => ({ id: e.id, name: e.name }))];
+
+  // Dims the month switcher (doesn't disable it — switching months while an
+  // event is selected is harmless, it just has nothing to affect) so it's
+  // visually clear the event view isn't scoped to whichever month happens
+  // to be open (claude/event-based-expenses-v1.md).
+  const monthScopeActive = eventFilter === 'ALL';
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={styles.monthSwitcher}>
+      <View style={[styles.monthSwitcher, { opacity: monthScopeActive ? 1 : 0.4 }]}>
         <Pressable onPress={() => setMonthOffset((v) => v - 1)} style={[styles.monthBtn, { backgroundColor: tokens.card }]}>
           <Text style={{ color: tokens.text, fontFamily: fontFamily.bold }}>−</Text>
         </Pressable>
@@ -172,6 +199,25 @@ export default function Transactions() {
                 )}
                 <Text style={{ color: active ? tokens.accentText : tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                   {c.name}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      )}
+
+      {events.length > 0 && (
+        <View style={[styles.filterRow, { marginTop: 4 }]}>
+          {eventFilters.map((e) => {
+            const active = eventFilter === e.id;
+            return (
+              <Pressable
+                key={e.id}
+                onPress={() => setEventFilter(e.id)}
+                style={[styles.filterChip, { backgroundColor: active ? tokens.accent : tokens.card }]}
+              >
+                <Text style={{ color: active ? tokens.accentText : tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                  {e.name}
                 </Text>
               </Pressable>
             );

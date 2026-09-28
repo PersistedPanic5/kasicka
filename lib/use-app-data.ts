@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/lib/auth-context';
 import { ensureBootstrapped } from '@/lib/bootstrap';
-import type { Account, Category } from '@/types/database';
+import type { Account, Category, EventRow } from '@/types/database';
 
 interface AppData {
   defaultAccountId: string | null;
@@ -10,6 +10,10 @@ interface AppData {
   /** Active accounts, for the entry form's collapsed account picker —
    * added alongside that panel (build-roadmap-v1.md Phase 1 remainder). */
   accounts: Account[];
+  /** Active events, newest first — feeds Record Expense's event badge
+   * (claude/event-based-expenses-v1.md). Managed in Settings → Events;
+   * empty means the badge doesn't show at all. */
+  activeEvents: EventRow[];
   /** `profile.month_start_day` (1–28, default 1) — see lib/budget-month.ts.
    * Defaults to 1 (plain calendar month) while still loading. */
   monthStartDay: number;
@@ -57,6 +61,7 @@ export function useAppData(): AppData {
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [activeEvents, setActiveEvents] = useState<EventRow[]>([]);
   const [monthStartDay, setMonthStartDay] = useState(1);
   const [amountButtons, setAmountButtons] = useState<number[]>([20, 50, 100, 200]);
   const [quickAmountsEnabled, setQuickAmountsEnabled] = useState(true);
@@ -72,6 +77,7 @@ export function useAppData(): AppData {
       setDefaultAccountId(null);
       setCategories([]);
       setAccounts([]);
+      setActiveEvents([]);
       setMonthStartDay(1);
       setAmountButtons([20, 50, 100, 200]);
       setQuickAmountsEnabled(true);
@@ -94,7 +100,7 @@ export function useAppData(): AppData {
         console.warn('[use-app-data] Bootstrap failed', err);
       }
 
-      const [profileRes, categoriesRes, accountsRes] = await Promise.all([
+      const [profileRes, categoriesRes, accountsRes, eventsRes] = await Promise.all([
         supabase
           .from('profile')
           .select(
@@ -104,6 +110,7 @@ export function useAppData(): AppData {
           .maybeSingle(),
         supabase.from('categories').select('*').eq('category_type', 'EXPENSE').order('sort_order'),
         supabase.from('accounts').select('*').eq('active', true).order('sort_order'),
+        supabase.from('events').select('*').eq('active', true).order('created_at', { ascending: false }),
       ]);
 
       if (cancelled) return;
@@ -115,6 +122,7 @@ export function useAppData(): AppData {
       if (profileRes.error) console.warn('[use-app-data] Failed to load profile', profileRes.error);
       if (categoriesRes.error) console.warn('[use-app-data] Failed to load categories', categoriesRes.error);
       if (accountsRes.error) console.warn('[use-app-data] Failed to load accounts', accountsRes.error);
+      if (eventsRes.error) console.warn('[use-app-data] Failed to load events', eventsRes.error);
       setDefaultAccountId(profileRes.data?.default_account_id ?? null);
       setMonthStartDay(profileRes.data?.month_start_day ?? 1);
       setAmountButtons(
@@ -130,6 +138,7 @@ export function useAppData(): AppData {
       setRecentInputsCategoryChars(profileRes.data?.recent_inputs_category_chars ?? 8);
       setCategories(categoriesRes.data ?? []);
       setAccounts(accountsRes.data ?? []);
+      setActiveEvents(eventsRes.data ?? []);
       setLoading(false);
     })();
 
@@ -144,6 +153,7 @@ export function useAppData(): AppData {
     defaultAccountId,
     categories,
     accounts,
+    activeEvents,
     monthStartDay,
     amountButtons,
     quickAmountsEnabled,

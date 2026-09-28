@@ -156,6 +156,9 @@ export interface Transaction {
   original_currency: string | null;
   original_amount: number | null;
   exchange_rate: number | null;
+  /** Which event/trip this expense was tagged with, if any — see
+   * supabase/migrations/0015_events.sql and claude/event-based-expenses-v1.md. */
+  event_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -291,10 +294,29 @@ export interface Debt {
    * an ordinary, never-merged debt. See supabase/migrations/
    * 0010_debts_unmerge_support.sql. */
   merged_from: MergedDebtSnapshot[] | null;
+  /** Set on a "Split this event" debt (transaction_id null, same reasoning
+   * as a merge) so it can still say which trip it came from. See
+   * supabase/migrations/0015_events.sql. */
+  event_id: string | null;
 }
 export type DebtInsert = Partial<Debt> &
   Pick<Debt, 'owner_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;
 export type DebtUpdate = Partial<Debt>;
+
+/** A tagged period/trip (Pavel: "Weekend in Cracow") — see
+ * supabase/migrations/0015_events.sql and claude/event-based-expenses-v1.md.
+ * Deactivating (not deleting) is what stops it being offered as a badge
+ * option in Record Expense while keeping every transaction tagged with it
+ * filterable forever, same convention as categories/accounts `active`. */
+export interface EventRow {
+  id: string;
+  owner_id: string;
+  name: string;
+  active: boolean;
+  created_at: string;
+}
+export type EventInsert = Partial<EventRow> & Pick<EventRow, 'owner_id' | 'name'>;
+export type EventUpdate = Partial<EventRow>;
 
 /** A browser/device that has granted Web Push permission — see
  * supabase/migrations/0004_recurring_and_push.sql and lib/push.ts. Mirrors
@@ -363,6 +385,7 @@ export interface Database {
       recurring_items: { Row: RecurringItem; Insert: RecurringItemInsert; Update: RecurringItemUpdate };
       long_term_items: { Row: LongTermItem; Insert: LongTermItemInsert; Update: LongTermItemUpdate };
       debts: { Row: Debt; Insert: DebtInsert; Update: DebtUpdate };
+      events: { Row: EventRow; Insert: EventInsert; Update: EventUpdate };
       push_subscriptions: {
         Row: PushSubscriptionRow;
         Insert: PushSubscriptionInsert;

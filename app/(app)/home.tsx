@@ -22,7 +22,18 @@ export default function DesktopHome() {
           showsVerticalScrollIndicator={false} keeps this looking like the
           rest of the card rather than growing a visible scrollbar down one
           side of it. */}
-      <ScrollView style={styles.formScroll} showsVerticalScrollIndicator={false} contentContainerStyle={styles.formWrap}>
+      {/* keyboardShouldPersistTaps="handled" — see the matching comment in
+          (mobile)/index.tsx's identical ScrollView: without it, a tap on
+          the currency badge while the amount field is focused gets
+          swallowed by the ScrollView's default dismiss-on-tap behavior
+          instead of reaching the badge's onPress (Pavel: "hover shows a
+          button, click does nothing"). */}
+      <ScrollView
+        style={styles.formScroll}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.formWrap}
+        keyboardShouldPersistTaps="handled"
+      >
         <ExpenseEntryForm variant="desktop" />
       </ScrollView>
     </View>

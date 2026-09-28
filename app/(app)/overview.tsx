@@ -1,15 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
+import { useAppData } from '@/lib/use-app-data';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
 import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
 import { categoryColor } from '@/lib/identity';
 import { TransactionList, type TransactionRow } from '@/components/TransactionList';
-import type { Category } from '@/types/database';
+import {
+  createOrMergeDebtsForSplit,
+  emptySplitPerson,
+  splitEvenly,
+  splitPeopleSum,
+  useDebtHistory,
+  validSplitPeople,
+  type SplitPerson,
+} from '@/lib/split-people';
+import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
+import type { Category, EventRow } from '@/types/database';
 
 type CategoryRow = Pick<Category, 'id' | 'name' | 'default_monthly_budget'>;
 
@@ -49,6 +60,7 @@ export default function Overview() {
   const { tokens } = useTheme();
   const { user } = useAuth();
   const { language, t } = useLanguage();
+  const { defaultAccountId } = useAppData();
 
   const [monthOffset, setMonthOffset] = useState(0);
   const [monthStartDay, setMonthStartDay] = useState<number | null>(null);
@@ -81,6 +93,25 @@ export default function Overview() {
   const [expandedCategoryIds, setExpandedCategoryIds] = useState<Set<string>>(new Set());
   const [categoryTx, setCategoryTx] = useState<Record<string, TransactionRow[]>>({});
   const [categoryTxLoading, setCategoryTxLoading] = useState<Record<string, boolean>>({});
+
+  // ── Events section (claude/event-based-expenses-v1.md) — same inline
+  // expand pattern as categories, but every total here is all-time, not
+  // scoped to `budgetMonth` (a trip's running total shouldn't reset just
+  // because the calendar rolled over), so this loads independently of the
+  // month switcher. ──────────────────────────────────────────────────────
+  const [events, setEvents] = useState<EventRow[]>([]);
+  const [eventTotals, setEventTotals] = useState<Record<string, number>>({});
+  const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
+  const [eventTx, setEventTx] = useState<Record<string, TransactionRow[]>>({});
+  const [eventTxLoading, setEventTxLoading] = useState<Record<string, boolean>>({});
+  const debtHistory = useDebtHistory();
+  const [splittingEventId, setSplittingEventId] = useState<string | null>(null);
+  const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
+  const [splitMessage, setSplitMessage] = useState('');
+  const [splitSaving, setSplitSaving] = useState(false);
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const [splitShareLinks, setSplitShareLinks] = useState<{ name: string; link: string }[]>([]);
+  const [splitCopiedIdx, setSplitCopiedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -217,6 +248,145 @@ export default function Overview() {
   async function handleCategoryTxChanged(cat: CategoryRow) {
     await loadCategoryTx(cat);
     load();
+  }
+
+  // All-time, not month-scoped — deliberately its own query rather than
+  // reusing `load()`'s (which is `.eq('budget_month', budgetMonth)`).
+  const loadEvents = useCallback(async () => {
+    if (!user) return;
+    const [eventsRes, txRes] = await Promise.all([
+      supabase
+        .from('events')
+        .select('*')
+        .eq('owner_id', user.id)
+        .order('active', { ascending: false })
+        .order('created_at', { ascending: false }),
+      supabase.from('transactions').select('event_id, type, amount').eq('owner_id', user.id).not('event_id', 'is', null),
+    ]);
+    setEvents(eventsRes.data ?? []);
+    const totals: Record<string, number> = {};
+    for (const row of txRes.data ?? []) {
+      if (!row.event_id) continue;
+      if (row.type === 'EXPENSE') totals[row.event_id] = (totals[row.event_id] ?? 0) + row.amount;
+      else if (row.type === 'DEBT_SETTLEMENT_CREDIT') totals[row.event_id] = (totals[row.event_id] ?? 0) - row.amount;
+    }
+    setEventTotals(totals);
+  }, [user]);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  const loadEventTx = useCallback(
+    async (ev: EventRow) => {
+      if (!user) return;
+      setEventTxLoading((prev) => ({ ...prev, [ev.id]: true }));
+      const { data } = await supabase
+        .from('transactions')
+        .select(
+          'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
+        )
+        .eq('owner_id', user.id)
+        .eq('event_id', ev.id)
+        .eq('status', 'PAID')
+        .order('transaction_date', { ascending: false })
+        .order('created_at', { ascending: false });
+      setEventTx((prev) => ({ ...prev, [ev.id]: (data as unknown as TransactionRow[]) ?? [] }));
+      setEventTxLoading((prev) => ({ ...prev, [ev.id]: false }));
+    },
+    [user]
+  );
+
+  function toggleEvent(ev: EventRow) {
+    setExpandedEventIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(ev.id)) next.delete(ev.id);
+      else next.add(ev.id);
+      return next;
+    });
+    if (!eventTx[ev.id]) loadEventTx(ev);
+  }
+
+  async function handleEventTxChanged(ev: EventRow) {
+    await loadEventTx(ev);
+    loadEvents();
+  }
+
+  function linkForToken(token: string) {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') return `${window.location.origin}/d/${token}`;
+    return `/d/${token}`;
+  }
+
+  // ── "Split this event" (claude/event-based-expenses-v1.md "Splitting",
+  // Option A) — one combined split covering the event's whole running
+  // total, reusing the standard debts mechanism with transaction_id null
+  // and event_id set (same shape as a merged debt). Deliberately simpler
+  // than ExpenseEntryForm/TransactionList's split panels: no "merge with
+  // an existing outstanding debt" offer here yet (skipped — add if Pavel
+  // wants it; every split still lands as a real, correct debt either way,
+  // it just won't offer folding into an existing one for a repeat debtor). */
+  function startSplit(ev: EventRow) {
+    setSplittingEventId(ev.id);
+    setSplitPeople([emptySplitPerson()]);
+    setSplitMessage(ev.name);
+    setSplitError(null);
+    setSplitShareLinks([]);
+  }
+
+  function cancelSplit() {
+    setSplittingEventId(null);
+  }
+
+  function addSplitPerson() {
+    setSplitPeople((prev) => [...prev, emptySplitPerson()]);
+  }
+  function removeSplitPerson(id: string) {
+    setSplitPeople((prev) => prev.filter((p) => p.id !== id));
+  }
+  function updateSplitPerson(id: string, field: 'name' | 'amount', value: string) {
+    setSplitPeople((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  }
+
+  async function saveEventSplit(ev: EventRow) {
+    if (!user || !defaultAccountId) return;
+    const total = eventTotals[ev.id] ?? 0;
+    const validPeople = validSplitPeople(splitPeople);
+    const sum = splitPeopleSum(splitPeople);
+    if (validPeople.length === 0) return;
+    if (sum > total + 0.01) {
+      setSplitError(t('home.splitOverAllocatedError'));
+      return;
+    }
+    setSplitSaving(true);
+    setSplitError(null);
+    const { links, error } = await createOrMergeDebtsForSplit({
+      ownerId: user.id,
+      transactionId: null,
+      eventId: ev.id,
+      targetAccountId: defaultAccountId,
+      message: splitMessage.trim() || null,
+      people: validPeople,
+      outstandingByName: debtHistory.outstandingByName,
+      mergeNames: new Set(),
+      currencyLabel: t('common.czk'),
+    });
+    if (error) setErrorForSplit(error);
+    setSplitShareLinks(links.map((l) => ({ name: l.name, link: linkForToken(l.token) })));
+    setSplitSaving(false);
+  }
+
+  function setErrorForSplit(message: string) {
+    setSplitError(`${t('common.shareLinkFailedPrefix')} ${message}`);
+  }
+
+  async function copySplitLink(idx: number) {
+    const link = splitShareLinks[idx];
+    if (!link) return;
+    if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+      await navigator.clipboard.writeText(link.link);
+      setSplitCopiedIdx(idx);
+      setTimeout(() => setSplitCopiedIdx(null), 1500);
+    }
   }
 
   function plannedFor(cat: CategoryRow): number {
@@ -479,6 +649,152 @@ export default function Overview() {
                   </View>
                 );
               })}
+            </View>
+          )}
+
+          {events.filter((e) => (eventTotals[e.id] ?? 0) > 0).length > 0 && (
+            <View style={{ marginTop: 28 }}>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 14 }}>
+                {t('more.events')}
+              </Text>
+              {events
+                .filter((e) => (eventTotals[e.id] ?? 0) > 0)
+                .map((ev) => {
+                  const expanded = expandedEventIds.has(ev.id);
+                  const total = eventTotals[ev.id] ?? 0;
+                  const splitting = splittingEventId === ev.id;
+                  const sum = splitPeopleSum(splitPeople);
+                  const remaining = Math.round((total - sum) * 100) / 100;
+                  return (
+                    <View key={ev.id} style={[styles.budgetCard, { backgroundColor: tokens.card }]}>
+                      <Pressable onPress={() => toggleEvent(ev)} style={styles.budgetRow}>
+                        <Text
+                          numberOfLines={1}
+                          style={{ color: ev.active ? tokens.text : tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13.5, flex: 1 }}
+                        >
+                          {ev.name}
+                        </Text>
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13, fontVariant: ['tabular-nums'] }}>
+                          {total} {t('common.czk')}
+                        </Text>
+                        <ChevronIcon expanded={expanded} color={tokens.textMuted} />
+                      </Pressable>
+
+                      {expanded && (
+                        <View style={{ marginTop: 12 }}>
+                          <TransactionList
+                            transactions={eventTx[ev.id] ?? []}
+                            categories={categories}
+                            loading={eventTxLoading[ev.id] ?? false}
+                            emptyMessage={t('transactions.noneYet')}
+                            onChanged={() => handleEventTxChanged(ev)}
+                          />
+
+                          {!splitting ? (
+                            <Pressable
+                              onPress={() => startSplit(ev)}
+                              style={[styles.editBtn, { backgroundColor: tokens.cardAlt, alignSelf: 'flex-start', marginTop: 10 }]}
+                            >
+                              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                {t('overview.splitEventBtn')}
+                              </Text>
+                            </Pressable>
+                          ) : (
+                            <View style={{ marginTop: 12, gap: 8 }}>
+                              <TextInput
+                                value={splitMessage}
+                                onChangeText={setSplitMessage}
+                                placeholder={t('home.messagePlaceholder')}
+                                placeholderTextColor={tokens.textMuted}
+                                style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border, width: '100%', textAlign: 'left' }]}
+                              />
+                              <Pressable
+                                onPress={() => setSplitPeople((prev) => splitEvenly(total, prev))}
+                                style={[styles.editBtn, { backgroundColor: tokens.cardAlt, alignSelf: 'flex-start' }]}
+                              >
+                                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                  {t('home.splitEvenlyBtn')}
+                                </Text>
+                              </Pressable>
+                              <Text style={{ color: remaining === 0 ? tokens.greenFg : remaining < 0 ? tokens.coral : tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12 }}>
+                                {sum} / {total} {t('common.czk')}
+                                {remaining > 0 ? ` · ${t('home.splitStillMissing')} ${remaining}` : ''}
+                                {remaining < 0 ? ` · ${t('home.splitOverAllocated')} ${Math.abs(remaining)}` : ''}
+                              </Text>
+                              {splitPeople.map((p) => (
+                                <View key={p.id} style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                  <NameAutocompleteInput
+                                    value={p.name}
+                                    onChangeText={(v) => updateSplitPerson(p.id, 'name', v)}
+                                    pastNames={debtHistory.pastNames}
+                                    placeholder={t('home.whoOwesPlaceholder')}
+                                    containerStyle={{ flex: 1 }}
+                                    inputStyle={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border, width: '100%', textAlign: 'left' }]}
+                                  />
+                                  <TextInput
+                                    value={p.amount}
+                                    onChangeText={(v) => updateSplitPerson(p.id, 'amount', v)}
+                                    keyboardType="numeric"
+                                    placeholder={t('home.howMuchPlaceholder')}
+                                    placeholderTextColor={tokens.textMuted}
+                                    style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border, width: 90 }]}
+                                  />
+                                  {splitPeople.length > 1 && (
+                                    <Pressable onPress={() => removeSplitPerson(p.id)} hitSlop={8}>
+                                      <Text style={{ color: tokens.coral, fontFamily: fontFamily.bold, fontSize: 16 }}>×</Text>
+                                    </Pressable>
+                                  )}
+                                </View>
+                              ))}
+                              <Pressable onPress={addSplitPerson}>
+                                <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                  {t('home.addPersonBtn')}
+                                </Text>
+                              </Pressable>
+
+                              {splitError && (
+                                <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12 }}>{splitError}</Text>
+                              )}
+                              {splitShareLinks.length > 0 && (
+                                <View style={{ gap: 6 }}>
+                                  {splitShareLinks.map((link, idx) => (
+                                    <View key={idx} style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                                      <Text style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 12.5, flex: 1 }}>
+                                        {link.name}
+                                      </Text>
+                                      <Pressable onPress={() => copySplitLink(idx)}>
+                                        <Text style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                          {splitCopiedIdx === idx ? t('common.copied') : t('common.copyLink')}
+                                        </Text>
+                                      </Pressable>
+                                    </View>
+                                  ))}
+                                </View>
+                              )}
+
+                              <View style={{ flexDirection: 'row', gap: 8 }}>
+                                <Pressable onPress={cancelSplit} disabled={splitSaving} style={[styles.editBtn, { backgroundColor: tokens.cardAlt }]}>
+                                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                    {t('common.cancel')}
+                                  </Text>
+                                </Pressable>
+                                <Pressable
+                                  onPress={() => saveEventSplit(ev)}
+                                  disabled={splitSaving || validSplitPeople(splitPeople).length === 0}
+                                  style={[styles.editBtn, { backgroundColor: tokens.accent, opacity: splitSaving ? 0.6 : 1 }]}
+                                >
+                                  <Text style={{ color: tokens.accentText, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                                    {splitSaving ? t('common.saving') : t('common.save')}
+                                  </Text>
+                                </Pressable>
+                              </View>
+                            </View>
+                          )}
+                        </View>
+                      )}
+                    </View>
+                  );
+                })}
             </View>
           )}
         </>

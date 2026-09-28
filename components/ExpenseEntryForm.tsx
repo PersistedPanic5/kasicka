@@ -115,6 +115,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     amountButtons,
     quickAmountsEnabled,
     activeCurrencies,
+    activeEvents,
     recentInputsEnabled,
     recentInputsCount,
     recentInputsScope,
@@ -127,6 +128,35 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [dayOffset, setDayOffset] = useState(0);
   const [note, setNote] = useState('');
+
+  // ── Event badge (claude/event-based-expenses-v1.md) ─────────────────
+  const [eventId, setEventId] = useState<string | null>(null);
+
+  // Defaults a fresh form to the newest active event (so the common case —
+  // one trip happening right now — needs zero taps) and clears the
+  // selection if it's no longer a valid active event (none active yet, or
+  // Settings deactivated the one that was picked).
+  useEffect(() => {
+    if (activeEvents.length === 0) {
+      if (eventId !== null) setEventId(null);
+      return;
+    }
+    if (!eventId || !activeEvents.some((e) => e.id === eventId)) {
+      setEventId(activeEvents[0].id);
+    }
+    // eventId intentionally omitted — this only needs to react to the
+    // active-events list changing, not to the cycle below re-setting it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeEvents]);
+
+  // Cycles every active event (newest first) → off → back around (Pavel:
+  // "event → off → other possible event"), same tap-to-cycle interaction
+  // as the currency badge.
+  function cycleEvent() {
+    const list: (string | null)[] = [...activeEvents.map((e) => e.id), null];
+    const idx = list.indexOf(eventId);
+    setEventId(list[(idx + 1) % list.length]);
+  }
 
   // ── Currency (Pavel's request) ──────────────────────────────────────
   const [currency, setCurrency] = useState('CZK');
@@ -437,6 +467,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         category_id: isExpense ? activeCategoryId : null,
         amount: czkAmount,
         note: note.trim() || null,
+        event_id: isExpense ? eventId : null,
         receipt_photo_url: photoPath,
         original_currency: currency !== 'CZK' ? currency : null,
         original_amount: currency !== 'CZK' ? numericAmount : null,
@@ -460,6 +491,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       const { links, error: splitError } = await createOrMergeDebtsForSplit({
         ownerId: user.id,
         transactionId: transaction.id,
+        eventId,
         targetAccountId: activeAccountId,
         message: splitMessage.trim() || null,
         people: validPeople,
@@ -632,6 +664,22 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             ? `≈ ${czkEquivalent} ${t('common.czk')}`
             : ' '}
         </Text>
+      )}
+
+      {/* The event badge (claude/event-based-expenses-v1.md) — shown only
+          once at least one event is active, expense-only (an event is a
+          bucket of bills, not income). Same tap-to-cycle visual language as
+          the currency badge above: plain text + ▾, no button chrome. Stays
+          selected across saves (like the category chip, unlike currency)
+          since the whole point is that it applies to every bill of a trip
+          without re-picking it each time. */}
+      {entryType === 'EXPENSE' && activeEvents.length > 0 && (
+        <Pressable onPress={cycleEvent} style={styles.eventBadge}>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+            {eventId ? activeEvents.find((e) => e.id === eventId)?.name ?? t('home.eventOff') : t('home.eventOff')}{' '}
+            <Text style={{ fontSize: 11 }}>▾</Text>
+          </Text>
+        </Pressable>
       )}
 
       {/* Turned off entirely in Settings → Quick amounts if Pavel doesn't
@@ -1081,6 +1129,7 @@ const styles = StyleSheet.create({
   amountInput: { fontSize: 48, fontFamily: fontFamily.regular, textAlign: 'center' },
   currencySuffix: { paddingHorizontal: 4, paddingBottom: 12 },
   czkEquivalent: { textAlign: 'center', fontSize: 13, fontFamily: fontFamily.medium, marginTop: -8 },
+  eventBadge: { alignSelf: 'center', paddingVertical: 4, paddingHorizontal: 8, marginBottom: 4 },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   quickAmountsHint: { textAlign: 'center', fontSize: 11, fontFamily: fontFamily.medium, marginTop: -4 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },

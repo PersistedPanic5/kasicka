@@ -9,7 +9,7 @@ import { supabase } from '@/lib/supabase';
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushSubscriptionState } from '@/lib/push';
 import { COMMON_CURRENCIES, downloadRateRange, ensureRate, type ResolvedRate } from '@/lib/exchange-rates';
 import type { Language } from '@/lib/i18n';
-import type { Account, AccountType, Category } from '@/types/database';
+import type { Account, AccountType, Category, EventRow } from '@/types/database';
 
 const DEFAULT_AMOUNT_BUTTONS = [20, 50, 100, 200];
 
@@ -131,6 +131,7 @@ export default function Settings() {
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [events, setEvents] = useState<EventRow[]>([]);
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(null);
   const [monthStartDay, setMonthStartDay] = useState(1);
   const [savingMonthStartDay, setSavingMonthStartDay] = useState(false);
@@ -182,6 +183,8 @@ export default function Settings() {
 
   const [newCategoryName, setNewCategoryName] = useState('');
   const [addingCategory, setAddingCategory] = useState(false);
+  const [newEventName, setNewEventName] = useState('');
+  const [addingEvent, setAddingEvent] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [savingCategoryRename, setSavingCategoryRename] = useState(false);
@@ -201,9 +204,15 @@ export default function Settings() {
   const load = useCallback(async () => {
     if (!user) return;
     setLoading(true);
-    const [categoriesRes, accountsRes, profileRes] = await Promise.all([
+    const [categoriesRes, accountsRes, eventsRes, profileRes] = await Promise.all([
       supabase.from('categories').select('*').eq('owner_id', user.id).order('sort_order'),
       supabase.from('accounts').select('*').eq('owner_id', user.id).order('sort_order'),
+      supabase
+        .from('events')
+        .select('*')
+        .eq('owner_id', user.id)
+        .order('active', { ascending: false })
+        .order('created_at', { ascending: false }),
       supabase
         .from('profile')
         .select(
@@ -214,6 +223,7 @@ export default function Settings() {
     ]);
     setCategories(categoriesRes.data ?? []);
     setAccounts(accountsRes.data ?? []);
+    setEvents(eventsRes.data ?? []);
     setDefaultAccountId(profileRes.data?.default_account_id ?? null);
     setMonthStartDay(profileRes.data?.month_start_day ?? 1);
     setAmountButtons(
@@ -257,6 +267,20 @@ export default function Settings() {
 
   async function toggleCategoryActive(cat: Category) {
     await supabase.from('categories').update({ active: !cat.active }).eq('id', cat.id);
+    load();
+  }
+
+  async function addEvent() {
+    if (!user || !newEventName.trim()) return;
+    setAddingEvent(true);
+    await supabase.from('events').insert({ owner_id: user.id, name: newEventName.trim() });
+    setNewEventName('');
+    setAddingEvent(false);
+    load();
+  }
+
+  async function toggleEventActive(ev: EventRow) {
+    await supabase.from('events').update({ active: !ev.active }).eq('id', ev.id);
     load();
   }
 
@@ -615,6 +639,63 @@ export default function Settings() {
                 onPress={addCategory}
                 disabled={addingCategory || !newCategoryName.trim()}
                 style={[styles.addBtn, { backgroundColor: tokens.accent, opacity: newCategoryName.trim() ? 1 : 0.5 }]}
+              >
+                <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 13 }}>
+                  {t('more.saveNew')}
+                </Text>
+              </Pressable>
+            </View>
+          </Section>
+
+          <Section
+            expanded={expandedSections.has('events')}
+            onToggle={() => toggleSection('events')}
+            title={t('more.events')}
+            description={t('more.eventsSectionDesc')}
+            titleColor={tokens.text}
+            descColor={tokens.textMuted}
+            chevronColor={tokens.textMuted}
+          >
+            {events.length === 0 && (
+              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13, marginBottom: 10 }}>
+                {t('more.noEvents')}
+              </Text>
+            )}
+            {events.map((ev) => (
+              <View key={ev.id} style={[styles.row, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+                <Text
+                  style={{
+                    color: ev.active ? tokens.text : tokens.textMuted,
+                    fontFamily: fontFamily.semibold,
+                    fontSize: 14,
+                    flex: 1,
+                  }}
+                >
+                  {ev.name}
+                </Text>
+                <Pressable
+                  onPress={() => toggleEventActive(ev)}
+                  style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                >
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                    {ev.active ? t('more.archive') : t('more.unarchive')}
+                  </Text>
+                </Pressable>
+              </View>
+            ))}
+
+            <View style={styles.addRow}>
+              <TextInput
+                value={newEventName}
+                onChangeText={setNewEventName}
+                placeholder={t('more.eventNamePlaceholder')}
+                placeholderTextColor={tokens.textMuted}
+                style={[styles.addInput, { color: tokens.text, borderColor: tokens.border }]}
+              />
+              <Pressable
+                onPress={addEvent}
+                disabled={addingEvent || !newEventName.trim()}
+                style={[styles.addBtn, { backgroundColor: tokens.accent, opacity: newEventName.trim() ? 1 : 0.5 }]}
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 13 }}>
                   {t('more.saveNew')}
