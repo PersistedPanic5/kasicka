@@ -569,14 +569,20 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
               styles.amountInput,
               {
                 color: tokens.text,
-                minWidth: Math.max(60, amount.length * 30),
-                // Belt-and-suspenders against the input stretching to fill
-                // the row (which would shove the currency suffix off to
-                // the edge instead of sitting right next to the digits,
-                // as intended) — flexGrow:0 is the default, but pinning
-                // it explicitly here means this can't regress silently.
+                // Capped (was unbounded: amount.length * 30 with no
+                // ceiling) — on a narrow phone, a long-enough amount grew
+                // this wider than the screen and pushed the currency
+                // suffix below off it entirely (Pavel: "the switcher...
+                // is actually rendered outside of the screen on mobile").
+                // Past the cap the input just scrolls its own text
+                // instead of growing further, same as any text field.
+                minWidth: Math.min(Math.max(60, amount.length * 30), 170),
+                // flexShrink:1 (was 0) — a last-resort safety net so that
+                // even the capped width above still yields to the
+                // currency suffix on the narrowest phones, instead of
+                // both fighting for space with neither able to shrink.
                 flexGrow: 0,
-                flexShrink: 0,
+                flexShrink: 1,
                 fontVariant: ['tabular-nums'],
               },
             ]}
