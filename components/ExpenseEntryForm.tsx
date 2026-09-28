@@ -569,14 +569,23 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
               styles.amountInput,
               {
                 color: tokens.text,
-                // Capped (was unbounded: amount.length * 30 with no
-                // ceiling) — on a narrow phone, a long-enough amount grew
+                // Capped both ends (was: unbounded minWidth, no maxWidth
+                // at all) — on a narrow phone, a long-enough amount grew
                 // this wider than the screen and pushed the currency
-                // suffix below off it entirely (Pavel: "the switcher...
-                // is actually rendered outside of the screen on mobile").
+                // suffix off it entirely (Pavel: "the switcher... is
+                // actually rendered outside of the screen on mobile").
                 // Past the cap the input just scrolls its own text
                 // instead of growing further, same as any text field.
-                minWidth: Math.min(Math.max(60, amount.length * 30), 170),
+                // The explicit maxWidth matters on web specifically: a
+                // bare <input> at this font size has its own large
+                // browser-default intrinsic width, and minWidth alone
+                // only sets a floor — it doesn't stop that intrinsic size
+                // from winning and spatially overlapping the currency
+                // badge next to it (Pavel's follow-up: the badge was
+                // visible but not clickable — something was sitting in
+                // front of it).
+                minWidth: 60,
+                maxWidth: Math.min(Math.max(60, amount.length * 30), 170),
                 // flexShrink:1 (was 0) — a last-resort safety net so that
                 // even the capped width above still yields to the
                 // currency suffix on the narrowest phones, instead of
@@ -593,9 +602,18 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             a separate button — no border/background chrome, just text
             sitting right after the digits, with a small ▾ as the only hint
             that it's tappable. Only shown once there's something to cycle
-            through. */}
+            through. zIndex pins it above the amount input explicitly
+            (Pavel: "move it to the front so I can actually click it") —
+            belt-and-suspenders alongside the maxWidth fix above, since a
+            web <input> can otherwise end up eating clicks meant for a
+            sibling it visually overlaps even without one being "in front"
+            in the ordinary DOM sense. */}
         {activeCurrencies.length > 0 && (
-          <Pressable onPress={cycleCurrency} hitSlop={10} style={[styles.currencySuffix, { flexGrow: 0, flexShrink: 0 }]}>
+          <Pressable
+            onPress={cycleCurrency}
+            hitSlop={10}
+            style={[styles.currencySuffix, { flexGrow: 0, flexShrink: 0, zIndex: 2 }]}
+          >
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 20 }}>
               {currency} <Text style={{ fontSize: 13 }}>▾</Text>
             </Text>
