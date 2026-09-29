@@ -131,7 +131,15 @@ export function useAppData(): AppData {
           : [20, 50, 100, 200]
       );
       setQuickAmountsEnabled(profileRes.data?.quick_amounts_enabled ?? true);
-      setActiveCurrencies(profileRes.data?.active_currencies ?? []);
+      // CZK is the implicit base and must never appear in this list (see
+      // the doc comment on active_currencies in types/database.ts) — but
+      // Settings' addCustomCurrency() used to have no guard against typing
+      // "CZK" in, and if it ever got in, cycleCurrency() in
+      // ExpenseEntryForm would find it already at the front of its own
+      // cycle list and set the same value back, so the badge silently did
+      // nothing on tap. Filtering it here self-heals any account whose
+      // stored active_currencies already picked it up.
+      setActiveCurrencies((profileRes.data?.active_currencies ?? []).filter((c: string) => c !== 'CZK'));
       setRecentInputsEnabled(profileRes.data?.recent_inputs_enabled ?? true);
       setRecentInputsCount(profileRes.data?.recent_inputs_count ?? 5);
       setRecentInputsScope(profileRes.data?.recent_inputs_scope ?? 'all');

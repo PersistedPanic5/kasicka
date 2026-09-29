@@ -463,7 +463,11 @@ export default function Settings() {
   function addCustomCurrency() {
     const code = newCurrencyCode.trim().toUpperCase();
     setNewCurrencyCode('');
-    if (!/^[A-Z]{3}$/.test(code) || trackedCurrencies.includes(code)) return;
+    // CZK is the implicit base and must never be tracked/active alongside
+    // itself — letting it in breaks the Record Expense currency badge (it
+    // makes cycleCurrency() set the same value back, so tapping it does
+    // nothing).
+    if (!/^[A-Z]{3}$/.test(code) || code === 'CZK' || trackedCurrencies.includes(code)) return;
     saveCurrencies([...trackedCurrencies, code].sort(), [...activeCurrencies, code].sort());
   }
 
