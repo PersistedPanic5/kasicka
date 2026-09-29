@@ -89,7 +89,7 @@ export default function Transactions() {
     let query = supabase
       .from('transactions')
       .select(
-        'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
+        'id, transaction_date, type, amount, note, status, category_id, account_id, event_id, receipt_photo_url, categories(name)'
       )
       .eq('status', 'PAID');
     // A specific event bypasses the month scope entirely and shows every
@@ -234,6 +234,8 @@ export default function Transactions() {
         <TransactionList
           transactions={filteredTransactions}
           categories={categories}
+          events={events}
+          monthStartDay={monthStartDay}
           loading={loading}
           selectable
           emptyMessage={tr('transactions.noneYet')}

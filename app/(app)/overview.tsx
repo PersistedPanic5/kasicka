@@ -218,7 +218,7 @@ export default function Overview() {
       const { data } = await supabase
         .from('transactions')
         .select(
-          'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
+          'id, transaction_date, type, amount, note, status, category_id, account_id, event_id, receipt_photo_url, categories(name)'
         )
         .eq('owner_id', user.id)
         .eq('budget_month', budgetMonth)
@@ -284,7 +284,7 @@ export default function Overview() {
       const { data } = await supabase
         .from('transactions')
         .select(
-          'id, transaction_date, type, amount, note, status, category_id, account_id, receipt_photo_url, categories(name)'
+          'id, transaction_date, type, amount, note, status, category_id, account_id, event_id, receipt_photo_url, categories(name)'
         )
         .eq('owner_id', user.id)
         .eq('event_id', ev.id)
@@ -640,6 +640,8 @@ export default function Overview() {
                         <TransactionList
                           transactions={categoryTx[cat.id] ?? []}
                           categories={categories}
+                          events={events}
+                          monthStartDay={monthStartDay}
                           loading={categoryTxLoading[cat.id] ?? false}
                           emptyMessage={t('transactions.noneYet')}
                           onChanged={() => handleCategoryTxChanged(cat)}
@@ -685,6 +687,8 @@ export default function Overview() {
                           <TransactionList
                             transactions={eventTx[ev.id] ?? []}
                             categories={categories}
+                            events={events}
+                            monthStartDay={monthStartDay}
                             loading={eventTxLoading[ev.id] ?? false}
                             emptyMessage={t('transactions.noneYet')}
                             onChanged={() => handleEventTxChanged(ev)}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useState } from 'react';
 import { Image, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import Svg, { Circle, Path } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
@@ -18,7 +18,8 @@ import {
 } from '@/lib/split-people';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import { categoryColor } from '@/lib/identity';
-import type { DebtStatus } from '@/types/database';
+import { budgetMonthForDate } from '@/lib/budget-month';
+import type { DebtStatus, EventRow } from '@/types/database';
 
 /** One split person's name matching an existing outstanding debt, offered
  * for merging at Save time — see the mergeOffer state below and
@@ -38,6 +39,7 @@ export type TransactionRow = {
   status: string;
   category_id: string | null;
   account_id: string;
+  event_id?: string | null;
   receipt_photo_url: string | null;
   categories: { name: string } | null;
 };
@@ -110,6 +112,8 @@ function PeopleIcon({ size = 12, color }: { size?: number; color: string }) {
 export function TransactionList({
   transactions,
   categories,
+  events = [],
+  monthStartDay,
   loading = false,
   emptyMessage,
   selectable = false,
@@ -117,6 +121,17 @@ export function TransactionList({
 }: {
   transactions: TransactionRow[];
   categories: { id: string; name: string }[];
+  /** All of the owner's events (active and archived) — archived ones stay
+   * offered here so a transaction already tagged with one keeps showing a
+   * real name instead of falling back silently, and so it can be
+   * re-tagged/untagged like any other field. Omit where the caller hasn't
+   * loaded events; the Event row on the edit modal just won't show. */
+  events?: Pick<EventRow, 'id' | 'name' | 'active'>[];
+  /** `profile.month_start_day` — needed to recompute `budget_month`
+   * (lib/budget-month.ts) when the edit modal's date field moves a
+   * transaction across a budget-month boundary. Falls back to 1 (the
+   * schema default) if the caller hasn't loaded it yet. */
+  monthStartDay?: number | null;
   loading?: boolean;
   emptyMessage: string;
   selectable?: boolean;
@@ -159,6 +174,8 @@ export function TransactionList({
   const [editAmount, setEditAmount] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editCategoryId, setEditCategoryId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState('');
+  const [editEventId, setEditEventId] = useState<string | null>(null);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -230,6 +247,8 @@ export function TransactionList({
     setEditAmount(String(t.amount));
     setEditNote(t.note ?? '');
     setEditCategoryId(t.category_id);
+    setEditDate(t.transaction_date);
+    setEditEventId(t.event_id ?? null);
     setEditError(null);
   }
 
@@ -246,6 +265,10 @@ export function TransactionList({
       setEditError(tr('transactions.amountError'));
       return;
     }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(editDate)) {
+      setEditError(tr('transactions.dateError'));
+      return;
+    }
     setEditSaving(true);
     setEditError(null);
     const { error } = await supabase
@@ -254,6 +277,12 @@ export function TransactionList({
         amount: numericAmount,
         note: editNote.trim() || null,
         category_id: editCategoryId,
+        transaction_date: editDate,
+        // Keep budget_month in sync so an edited date actually moves the
+        // transaction to the right month bucket instead of leaving it
+        // filed under its old one — see lib/budget-month.ts.
+        budget_month: budgetMonthForDate(editDate, monthStartDay ?? 1),
+        event_id: editEventId,
       })
       .eq('id', editing.id);
 
@@ -600,6 +629,38 @@ export function TransactionList({
             />
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
+              {tr('transactions.dateLabel')}
+            </Text>
+            {Platform.OS === 'web'
+              ? createElement('input', {
+                  type: 'date',
+                  value: editDate,
+                  onChange: (e: { target: { value: string } }) => setEditDate(e.target.value),
+                  style: {
+                    borderWidth: 1,
+                    borderColor: tokens.border,
+                    borderRadius: 10,
+                    paddingLeft: 12,
+                    paddingRight: 12,
+                    paddingTop: 10,
+                    paddingBottom: 10,
+                    fontSize: 14,
+                    color: tokens.text,
+                    background: 'transparent',
+                    fontFamily: 'inherit',
+                  },
+                })
+              : (
+                <TextInput
+                  value={editDate}
+                  onChangeText={setEditDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={tokens.textMuted}
+                  style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
+                />
+              )}
+
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
               {tr('transactions.noteLabel')}
             </Text>
             <TextInput
@@ -633,6 +694,50 @@ export function TransactionList({
                           }}
                         >
                           {cat.name}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            {events.length > 0 && (
+              <>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
+                  {tr('more.events')}
+                </Text>
+                <View style={styles.chipRow}>
+                  <Pressable
+                    onPress={() => setEditEventId(null)}
+                    style={[styles.chip, { backgroundColor: editEventId === null ? tokens.accent : tokens.card }]}
+                  >
+                    <Text
+                      style={{
+                        color: editEventId === null ? tokens.accentText : tokens.text,
+                        fontFamily: fontFamily.semibold,
+                        fontSize: 12.5,
+                      }}
+                    >
+                      {tr('home.eventOff')}
+                    </Text>
+                  </Pressable>
+                  {events.map((ev) => {
+                    const active = editEventId === ev.id;
+                    return (
+                      <Pressable
+                        key={ev.id}
+                        onPress={() => setEditEventId(ev.id)}
+                        style={[styles.chip, { backgroundColor: active ? tokens.accent : tokens.card, opacity: ev.active ? 1 : 0.6 }]}
+                      >
+                        <Text
+                          style={{
+                            color: active ? tokens.accentText : tokens.text,
+                            fontFamily: fontFamily.semibold,
+                            fontSize: 12.5,
+                          }}
+                        >
+                          {ev.name}
                         </Text>
                       </Pressable>
                     );
