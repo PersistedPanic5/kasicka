@@ -9,7 +9,7 @@ import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
 import { currentBudgetMonth, formatBudgetMonthLabel, shiftBudgetMonth } from '@/lib/budget-month';
 import { categoryColor } from '@/lib/identity';
-import { TransactionList, type TransactionRow } from '@/components/TransactionList';
+import { TransactionList, categoryOrTypeLabel, type TransactionRow } from '@/components/TransactionList';
 import {
   createOrMergeDebtsForSplit,
   emptySplitPerson,
@@ -310,6 +310,33 @@ export default function Overview() {
   async function handleEventTxChanged(ev: EventRow) {
     await loadEventTx(ev);
     loadEvents();
+  }
+
+  /** Per-category subtotals within one event (Pavel: "include the
+   * categories into the events... so I can compare what i spent with
+   * what") — same EXPENSE-adds/DEBT_SETTLEMENT_CREDIT-subtracts math as
+   * eventTotals above, just grouped by category instead of summed flat.
+   * Computed from the already-loaded eventTx rows rather than a separate
+   * query. */
+  function categoryBreakdownForEvent(ev: EventRow) {
+    const totals = new Map<string, number>();
+    const names = new Map<string, string>();
+    for (const row of eventTx[ev.id] ?? []) {
+      if (row.type !== 'EXPENSE' && row.type !== 'DEBT_SETTLEMENT_CREDIT') continue;
+      const key = row.category_id ?? `type:${row.type}`;
+      const delta = row.type === 'EXPENSE' ? row.amount : -row.amount;
+      totals.set(key, (totals.get(key) ?? 0) + delta);
+      if (!names.has(key)) names.set(key, categoryOrTypeLabel(row, t));
+    }
+    return Array.from(totals.entries())
+      .map(([key, amount]) => ({
+        key,
+        name: names.get(key) ?? key,
+        amount,
+        colorIndex: categories.findIndex((c) => c.id === key),
+      }))
+      .filter((b) => b.amount > 0)
+      .sort((a, b) => b.amount - a.amount);
   }
 
   function linkForToken(token: string) {
@@ -684,6 +711,39 @@ export default function Overview() {
 
                       {expanded && (
                         <View style={{ marginTop: 12 }}>
+                          {(() => {
+                            const breakdown = categoryBreakdownForEvent(ev);
+                            const max = breakdown.reduce((m, b) => Math.max(m, b.amount), 0);
+                            if (breakdown.length === 0) return null;
+                            return (
+                              <View style={{ gap: 10, marginBottom: 16 }}>
+                                {breakdown.map((b) => (
+                                  <View key={b.key} style={{ gap: 4 }}>
+                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                                      <Text numberOfLines={1} style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5, flex: 1 }}>
+                                        {b.name}
+                                      </Text>
+                                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, fontVariant: ['tabular-nums'] }}>
+                                        {b.amount} {t('common.czk')}
+                                      </Text>
+                                    </View>
+                                    <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt }]}>
+                                      <View
+                                        style={[
+                                          styles.barFill,
+                                          {
+                                            width: `${max > 0 ? (b.amount / max) * 100 : 0}%`,
+                                            backgroundColor: b.colorIndex >= 0 ? categoryColor(b.colorIndex, tokens) : tokens.textMuted,
+                                          },
+                                        ]}
+                                      />
+                                    </View>
+                                  </View>
+                                ))}
+                              </View>
+                            );
+                          })()}
+
                           <TransactionList
                             transactions={eventTx[ev.id] ?? []}
                             categories={categories}
@@ -710,7 +770,7 @@ export default function Overview() {
                                 onChangeText={setSplitMessage}
                                 placeholder={t('home.messagePlaceholder')}
                                 placeholderTextColor={tokens.textMuted}
-                                style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border, width: '100%', textAlign: 'left' }]}
+                                style={[styles.splitFieldInput, { color: tokens.text, borderColor: tokens.border, width: '100%', textAlign: 'left' }]}
                               />
                               <Pressable
                                 onPress={() => setSplitPeople((prev) => splitEvenly(total, prev))}
@@ -733,7 +793,7 @@ export default function Overview() {
                                     pastNames={debtHistory.pastNames}
                                     placeholder={t('home.whoOwesPlaceholder')}
                                     containerStyle={{ flex: 1 }}
-                                    inputStyle={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border, width: '100%', textAlign: 'left' }]}
+                                    inputStyle={[styles.splitFieldInput, { color: tokens.text, borderColor: tokens.border, width: '100%', textAlign: 'left' }]}
                                   />
                                   <TextInput
                                     value={p.amount}
@@ -741,7 +801,7 @@ export default function Overview() {
                                     keyboardType="numeric"
                                     placeholder={t('home.howMuchPlaceholder')}
                                     placeholderTextColor={tokens.textMuted}
-                                    style={[styles.budgetInput, { color: tokens.text, borderColor: tokens.border, width: 90 }]}
+                                    style={[styles.splitFieldInput, { color: tokens.text, borderColor: tokens.border, width: 120 }]}
                                   />
                                   {splitPeople.length > 1 && (
                                     <Pressable onPress={() => removeSplitPerson(p.id)} hitSlop={8}>
@@ -829,4 +889,10 @@ const styles = StyleSheet.create({
   barFill: { height: 10, borderRadius: 5 },
   budgetEditSlot: { flexDirection: 'row', alignItems: 'center', gap: 6, flexBasis: 148, flexShrink: 0, justifyContent: 'flex-end' },
   budgetInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, fontSize: 13, width: 80, textAlign: 'right' },
+  // Event-split fields (Pavel: "the text in the how much field does not
+  // fit... make it bigger and a little higher, similar to record
+  // expense") — budgetInput above is deliberately tiny for the inline
+  // category-budget numbers; this is the comfortable size used for actual
+  // data entry elsewhere (ExpenseEntryForm/TransactionList's splitInput).
+  splitFieldInput: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12, fontSize: 15 },
 });
