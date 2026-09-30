@@ -104,6 +104,12 @@ export default function Overview() {
   const [expandedEventIds, setExpandedEventIds] = useState<Set<string>>(new Set());
   const [eventTx, setEventTx] = useState<Record<string, TransactionRow[]>>({});
   const [eventTxLoading, setEventTxLoading] = useState<Record<string, boolean>>({});
+  // Which category row is expanded within which event — keyed
+  // `${eventId}:${categoryKey}` (Pavel: "make every event work like the
+  // overview above — mainly categories, click one to unhide what's below
+  // it"). No separate fetch: eventTx[ev.id] already has every transaction
+  // for the event, so a category row's list is just that array filtered.
+  const [expandedEventCategoryIds, setExpandedEventCategoryIds] = useState<Set<string>>(new Set());
   const debtHistory = useDebtHistory();
   const [splittingEventId, setSplittingEventId] = useState<string | null>(null);
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
@@ -310,6 +316,16 @@ export default function Overview() {
   async function handleEventTxChanged(ev: EventRow) {
     await loadEventTx(ev);
     loadEvents();
+  }
+
+  function toggleEventCategory(eventId: string, categoryKey: string) {
+    const rowKey = `${eventId}:${categoryKey}`;
+    setExpandedEventCategoryIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) next.delete(rowKey);
+      else next.add(rowKey);
+      return next;
+    });
   }
 
   /** Per-category subtotals within one event (Pavel: "include the
@@ -714,45 +730,80 @@ export default function Overview() {
                           {(() => {
                             const breakdown = categoryBreakdownForEvent(ev);
                             const max = breakdown.reduce((m, b) => Math.max(m, b.amount), 0);
-                            if (breakdown.length === 0) return null;
+                            if (breakdown.length === 0) {
+                              return (
+                                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 13 }}>
+                                  {t('transactions.noneYet')}
+                                </Text>
+                              );
+                            }
                             return (
-                              <View style={{ gap: 10, marginBottom: 16 }}>
-                                {breakdown.map((b) => (
-                                  <View key={b.key} style={{ gap: 4 }}>
-                                    <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-                                      <Text numberOfLines={1} style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5, flex: 1 }}>
-                                        {b.name}
-                                      </Text>
-                                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, fontVariant: ['tabular-nums'] }}>
-                                        {b.amount} {t('common.czk')}
-                                      </Text>
+                              <View style={{ gap: 8, marginBottom: 8 }}>
+                                {breakdown.map((b) => {
+                                  const rowKey = `${ev.id}:${b.key}`;
+                                  const catExpanded = expandedEventCategoryIds.has(rowKey);
+                                  const rowTx = (eventTx[ev.id] ?? []).filter(
+                                    (row) => (row.category_id ?? `type:${row.type}`) === b.key
+                                  );
+                                  return (
+                                    // Same "tap the category to unhide its
+                                    // transactions" pattern as the main
+                                    // Categories section above, one level
+                                    // nested — filtered client-side from the
+                                    // event's already-loaded transactions, no
+                                    // separate fetch per category.
+                                    <View key={b.key} style={[styles.budgetCard, { backgroundColor: tokens.cardAlt }]}>
+                                      <Pressable onPress={() => toggleEventCategory(ev.id, b.key)} style={styles.budgetRow}>
+                                        <View
+                                          style={[
+                                            styles.categorySwatch,
+                                            { backgroundColor: b.colorIndex >= 0 ? categoryColor(b.colorIndex, tokens) : tokens.textMuted },
+                                          ]}
+                                        />
+                                        <Text
+                                          numberOfLines={1}
+                                          style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13.5, flexBasis: 92, flexShrink: 1 }}
+                                        >
+                                          {b.name}
+                                        </Text>
+                                        <View style={[styles.barTrack, { backgroundColor: tokens.card }]}>
+                                          <View
+                                            style={[
+                                              styles.barFill,
+                                              {
+                                                width: `${max > 0 ? (b.amount / max) * 100 : 0}%`,
+                                                backgroundColor: b.colorIndex >= 0 ? categoryColor(b.colorIndex, tokens) : tokens.textMuted,
+                                              },
+                                            ]}
+                                          />
+                                        </View>
+                                        <Text
+                                          numberOfLines={1}
+                                          style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5, fontVariant: ['tabular-nums'] }}
+                                        >
+                                          {b.amount} {t('common.czk')}
+                                        </Text>
+                                        <ChevronIcon expanded={catExpanded} color={tokens.textMuted} />
+                                      </Pressable>
+                                      {catExpanded && (
+                                        <View style={{ marginTop: 12 }}>
+                                          <TransactionList
+                                            transactions={rowTx}
+                                            categories={categories}
+                                            events={events}
+                                            monthStartDay={monthStartDay}
+                                            loading={eventTxLoading[ev.id] ?? false}
+                                            emptyMessage={t('transactions.noneYet')}
+                                            onChanged={() => handleEventTxChanged(ev)}
+                                          />
+                                        </View>
+                                      )}
                                     </View>
-                                    <View style={[styles.barTrack, { backgroundColor: tokens.cardAlt }]}>
-                                      <View
-                                        style={[
-                                          styles.barFill,
-                                          {
-                                            width: `${max > 0 ? (b.amount / max) * 100 : 0}%`,
-                                            backgroundColor: b.colorIndex >= 0 ? categoryColor(b.colorIndex, tokens) : tokens.textMuted,
-                                          },
-                                        ]}
-                                      />
-                                    </View>
-                                  </View>
-                                ))}
+                                  );
+                                })}
                               </View>
                             );
                           })()}
-
-                          <TransactionList
-                            transactions={eventTx[ev.id] ?? []}
-                            categories={categories}
-                            events={events}
-                            monthStartDay={monthStartDay}
-                            loading={eventTxLoading[ev.id] ?? false}
-                            emptyMessage={t('transactions.noneYet')}
-                            onChanged={() => handleEventTxChanged(ev)}
-                          />
 
                           {!splitting ? (
                             <Pressable
