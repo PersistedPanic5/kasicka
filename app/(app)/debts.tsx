@@ -25,6 +25,8 @@ type DebtRow = {
   /** Set only on a debt created by merging others — what "Unmerge" (below)
    * recreates from. See supabase/migrations/0010_debts_unmerge_support.sql. */
   merged_from: MergedDebtSnapshot[] | null;
+  /** 'FIO' = settled automatically by check-fio-payments (migration 0016). */
+  settled_via: 'FIO' | null;
 };
 
 /**
@@ -86,7 +88,7 @@ export default function Debts() {
     const { data } = await supabase
       .from('debts')
       .select(
-        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from'
+        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from, settled_via'
       )
       // A debt folded into another one via merge (supabase/migrations/
       // 0011_debts_merge_supersede.sql) is history, not something to act
@@ -101,6 +103,47 @@ export default function Debts() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Fio bank-feed matching (claude/fio-payment-matching-v1.md). Runs the
+  // server-side check once when the page opens (cheap no-op when nothing is
+  // open or Fio was checked <35 s ago) and again on the button.
+  const [hasFio, setHasFio] = useState(false);
+  const [fioBusy, setFioBusy] = useState(false);
+  const [fioMsg, setFioMsg] = useState<string | null>(null);
+
+  const checkFio = useCallback(
+    async (manual: boolean) => {
+      setFioBusy(true);
+      const { data, error } = await supabase.functions.invoke('check-fio-payments', { body: {} });
+      setFioBusy(false);
+      const settledN = data?.settled ?? 0;
+      const problem = error ? 'unreachable' : data?.errors?.[0];
+      if (settledN > 0) {
+        setFioMsg(t('debts.fioSettledN').replace('{n}', String(settledN)));
+        load();
+      } else if (problem) {
+        setFioMsg(t('debts.fioProblem').replace('{error}', String(problem)));
+      } else if (manual) {
+        setFioMsg(data?.checked ? t('debts.fioNothingNew') : t('debts.fioThrottled'));
+      }
+    },
+    [load, t]
+  );
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('accounts')
+      .select('id')
+      .eq('owner_id', user.id)
+      .eq('bank_provider', 'FIO')
+      .then(({ data }) => {
+        const any = (data?.length ?? 0) > 0;
+        setHasFio(any);
+        if (any) checkFio(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -504,7 +547,9 @@ export default function Debts() {
                 }}
               >
                 {debt.status === 'SETTLED'
-                  ? t('debts.settled')
+                  ? debt.settled_via === 'FIO'
+                    ? t('debts.settledAutomatically')
+                    : t('debts.settled')
                   : debt.status === 'CLAIMED_PAID'
                   ? t('debts.awaitingConfirmation')
                   : t('debts.outstanding')}
@@ -615,6 +660,23 @@ export default function Debts() {
           </Text>
         </Pressable>
       </View>
+
+      {hasFio && (
+        <View style={{ marginBottom: 12 }}>
+          <Pressable
+            onPress={() => checkFio(true)}
+            disabled={fioBusy}
+            style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, alignSelf: 'flex-start', opacity: fioBusy ? 0.6 : 1 }]}
+          >
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+              {fioBusy ? t('debts.checkingFio') : t('debts.checkFioNow')}
+            </Text>
+          </Pressable>
+          {fioMsg && (
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 6 }}>{fioMsg}</Text>
+          )}
+        </View>
+      )}
 
       {!loading && (
         <>

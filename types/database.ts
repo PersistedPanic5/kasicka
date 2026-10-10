@@ -101,6 +101,13 @@ export interface Account {
   sort_order: number;
   active: boolean;
   created_at: string;
+  /** 'FIO' = this account is watched via the Fio API (a token is stored
+   * server-side — it is never readable from the app). Only ever set by the
+   * set_fio_token RPC. See supabase/migrations/0016_fio_payments.sql. */
+  bank_provider: 'FIO' | null;
+  fio_last_checked_at: string | null;
+  fio_last_success_at: string | null;
+  fio_last_error: string | null;
 }
 export type AccountInsert = Partial<Account> & Pick<Account, 'owner_id' | 'name' | 'account_type'>;
 export type AccountUpdate = Partial<Account>;
@@ -298,6 +305,12 @@ export interface Debt {
    * as a merge) so it can still say which trip it came from. See
    * supabase/migrations/0015_events.sql. */
   event_id: string | null;
+  /** Unique variable symbol put in the QR / shown for manual payment, used
+   * to match Fio payments. See 0016_fio_payments.sql. */
+  payment_vs: string;
+  /** 'FIO' when the debt was settled automatically from the bank feed. */
+  settled_via: 'FIO' | null;
+  fio_movement_id: string | null;
 }
 export type DebtInsert = Partial<Debt> &
   Pick<Debt, 'owner_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;

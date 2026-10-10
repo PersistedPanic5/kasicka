@@ -195,6 +195,12 @@ export default function Settings() {
   const [newAccountNumber, setNewAccountNumber] = useState('');
   const [newAccountBankCode, setNewAccountBankCode] = useState('');
   const [addingAccount, setAddingAccount] = useState(false);
+  // Fio token entry — write-only: the value goes to the set_fio_token RPC
+  // and is cleared right after; the app can never read a stored token back.
+  const [fioEditId, setFioEditId] = useState<string | null>(null);
+  const [fioToken, setFioToken] = useState('');
+  const [fioSaving, setFioSaving] = useState(false);
+  const [fioError, setFioError] = useState<string | null>(null);
 
   const [pushSupported, setPushSupported] = useState(false);
   const [pushSubscribed, setPushSubscribed] = useState(false);
@@ -328,6 +334,30 @@ export default function Settings() {
 
   async function toggleAccountActive(acc: Account) {
     await supabase.from('accounts').update({ active: !acc.active }).eq('id', acc.id);
+    load();
+  }
+
+  async function saveFioToken(acc: Account) {
+    const token = fioToken.trim();
+    if (!/^[A-Za-z0-9]{64}$/.test(token)) {
+      setFioError(t('more.fioTokenInvalid'));
+      return;
+    }
+    setFioSaving(true);
+    setFioError(null);
+    const { error } = await supabase.rpc('set_fio_token', { p_account_id: acc.id, p_token: token });
+    setFioSaving(false);
+    if (error) {
+      setFioError(t('more.fioSaveFailed'));
+      return;
+    }
+    setFioToken('');
+    setFioEditId(null);
+    load();
+  }
+
+  async function removeFio(acc: Account) {
+    await supabase.rpc('set_fio_token', { p_account_id: acc.id, p_token: null });
     load();
   }
 
@@ -770,6 +800,97 @@ export default function Settings() {
                     </Text>
                   </Pressable>
                 </View>
+
+                {acc.account_type !== 'CASH' && acc.account_number && acc.bank_code === '2010' && (
+                  <View style={{ width: '100%', marginTop: 10 }}>
+                    {acc.bank_provider === 'FIO' && (
+                      <>
+                        <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+                          ✓ {t('more.fioActive')}
+                        </Text>
+                        {acc.fio_last_success_at && (
+                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 2 }}>
+                            {t('more.fioLastOk')}: {new Date(acc.fio_last_success_at).toLocaleString(language === 'cs' ? 'cs-CZ' : 'en-GB')}
+                          </Text>
+                        )}
+                        {acc.fio_last_error && (
+                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 2 }}>
+                            {t('more.fioLastError')}: {acc.fio_last_error}
+                          </Text>
+                        )}
+                      </>
+                    )}
+                    {fioEditId !== acc.id && (
+                      <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                        <Pressable
+                          onPress={() => {
+                            setFioEditId(acc.id);
+                            setFioToken('');
+                            setFioError(null);
+                          }}
+                          style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                        >
+                          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                            {acc.bank_provider === 'FIO' ? t('more.fioReplaceToken') : t('more.fioConnect')}
+                          </Text>
+                        </Pressable>
+                        {acc.bank_provider === 'FIO' && (
+                          <Pressable onPress={() => removeFio(acc)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+                            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                              {t('more.fioRemove')}
+                            </Text>
+                          </Pressable>
+                        )}
+                      </View>
+                    )}
+                    {fioEditId === acc.id && (
+                      <View style={{ marginTop: 8 }}>
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginBottom: 6 }}>
+                          {t('more.fioIntro')}
+                        </Text>
+                        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.regular, fontSize: 11.5, marginBottom: 8 }}>
+                          {t('more.fioTips')}
+                        </Text>
+                        <TextInput
+                          value={fioToken}
+                          onChangeText={setFioToken}
+                          placeholder={t('more.fioTokenPlaceholder')}
+                          placeholderTextColor={tokens.textMuted}
+                          secureTextEntry
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          autoComplete="off"
+                          style={[styles.addInput, { color: tokens.text, borderColor: tokens.border }]}
+                        />
+                        {fioError && (
+                          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 4 }}>{fioError}</Text>
+                        )}
+                        <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                          <Pressable
+                            onPress={() => saveFioToken(acc)}
+                            disabled={fioSaving || !fioToken.trim()}
+                            style={[styles.smallBtn, { backgroundColor: tokens.accent, opacity: fioToken.trim() ? 1 : 0.5 }]}
+                          >
+                            <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 12 }}>
+                              {t('more.fioSaveToken')}
+                            </Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => {
+                              setFioEditId(null);
+                              setFioToken('');
+                            }}
+                            style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+                          >
+                            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                              {t('common.cancel')}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                )}
               </View>
             ))}
 

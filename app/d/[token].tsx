@@ -75,7 +75,19 @@ type DebtShareView = {
    * itself since deleted. See supabase/migrations/
    * 0011_debts_merge_supersede.sql. */
   merged_into_token: string | null;
+  /** Fio-linked target account only (null otherwise): the unique variable
+   * symbol the payment must carry so the server can match it to this debt.
+   * See supabase/migrations/0016_fio_payments.sql. */
+  variable_symbol: string | null;
+  fio_enabled: boolean;
+  /** SETTLED by the bank-feed matcher rather than by Pavel clicking Confirm. */
+  settled_automatically: boolean;
 };
+
+// How often a Fio-linked debtor page asks the server to look at the bank
+// feed. The server enforces Fio's own >=30 s/token limit no matter how many
+// pages are open, so this only has to feel "live", not be exact.
+const FIO_POLL_MS = 8000;
 
 function formatCzechAccountNumber(
   prefix: string | null,
@@ -122,20 +134,38 @@ export default function DebtorSharePage() {
     return typeof value === 'string' ? value : path;
   };
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase.rpc('get_debt_by_share_token', { p_token: token });
-    if (error || !data || (Array.isArray(data) && data.length === 0)) {
-      setNotFound(true);
-    } else {
-      setDebt((Array.isArray(data) ? data[0] : data) as DebtShareView);
-    }
-    setLoading(false);
-  }, [token]);
+  // `silent` = background refresh from the Fio poll: no spinner flash, and a
+  // transient error keeps showing the last good data instead of "invalid link".
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      const { data, error } = await supabase.rpc('get_debt_by_share_token', { p_token: token });
+      if (error || !data || (Array.isArray(data) && data.length === 0)) {
+        if (!silent) setNotFound(true);
+      } else {
+        setDebt((Array.isArray(data) ? data[0] : data) as DebtShareView);
+      }
+      if (!silent) setLoading(false);
+    },
+    [token]
+  );
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Live payment confirmation: while a Fio-linked debt is still open, ask the
+  // check-fio-payments function (server-side throttled + does the matching /
+  // settling) and then re-read the debt. Stops as soon as it's SETTLED.
+  const watching = !!debt && debt.fio_enabled && (debt.status === 'OUTSTANDING' || debt.status === 'CLAIMED_PAID');
+  useEffect(() => {
+    if (!watching) return;
+    const id = setInterval(async () => {
+      await supabase.functions.invoke('check-fio-payments', { body: { share_token: token } }).catch(() => null);
+      load(true);
+    }, FIO_POLL_MS);
+    return () => clearInterval(id);
+  }, [watching, token, load]);
 
   async function markPaid() {
     await supabase.rpc('claim_debt_paid', { p_token: token });
@@ -217,6 +247,7 @@ export default function DebtorSharePage() {
           iban: czechIBAN(debt.target_bank_code, debt.target_account_number, debt.target_account_prefix),
           amount: debt.amount,
           message: debt.description ?? undefined,
+          variableSymbol: debt.variable_symbol ?? undefined,
         })
       : null;
 
@@ -281,9 +312,6 @@ export default function DebtorSharePage() {
           them the current link, instead of a dead end. */}
       {!loading && debt && debt.status === 'MERGED' && (
         <View style={styles.body}>
-          <View style={[styles.avatar, { backgroundColor: tokens.cardAlt }]}>
-            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 15 }}>P</Text>
-          </View>
           <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 6, textAlign: 'center' }}>
             {t('debtShare.mergedTitle')}
           </Text>
@@ -314,14 +342,13 @@ export default function DebtorSharePage() {
 
       {!loading && debt && debt.status !== 'MERGED' && (
         <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.body}>
-          <View style={[styles.avatar, { backgroundColor: tokens.cardAlt }]}>
-            <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 15 }}>P</Text>
+          <View style={[styles.pill, { backgroundColor: tokens.cardAlt }]}>
+            <Text style={{ color: tokens.accent, fontFamily: fontFamily.bold, fontSize: 13.5, textAlign: 'center' }}>
+              {'Pavel '}
+              {t('debtShare.owesFor')}
+            </Text>
           </View>
-          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 13, marginBottom: 3 }}>
-            {'Pavel '}
-            {t('debtShare.owesFor')}
-          </Text>
-          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15, marginBottom: 8 }}>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 15, marginBottom: 8, textAlign: 'center' }}>
             {debt.description}
           </Text>
           <Text style={{ color: tokens.text, fontFamily: fontFamily.regular, fontSize: 34, lineHeight: 38 }}>
@@ -404,19 +431,41 @@ export default function DebtorSharePage() {
                   >
                     {acctCopied ? t('debtShare.copiedCheck') : t('debtShare.tapToCopy')}
                   </Text>
+                  {debt.variable_symbol && (
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5, marginTop: 6 }} selectable>
+                      {t('debtShare.variableSymbol')}: {debt.variable_symbol}
+                    </Text>
+                  )}
                 </View>
               )}
             </View>
           )}
 
-          <View style={{ flex: 1, minHeight: 10 }} />
-
           {debt.status === 'OUTSTANDING' && (
-            <Pressable onPress={markPaid} style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
-              <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
-                {t('debtShare.iPaidThis')}
+            <>
+              <Text
+                style={{
+                  color: tokens.textMuted,
+                  fontFamily: fontFamily.medium,
+                  fontSize: 13,
+                  textAlign: 'center',
+                  marginTop: 16,
+                  marginBottom: 8,
+                }}
+              >
+                {debt.fio_enabled ? t('debtShare.ctaAfterPayAuto') : t('debtShare.ctaAfterPay')}
               </Text>
-            </Pressable>
+              <Pressable onPress={markPaid} style={[styles.primaryBtn, { backgroundColor: tokens.accent }]}>
+                <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 15 }}>
+                  {t('debtShare.iPaidThis')}
+                </Text>
+              </Pressable>
+              {debt.fio_enabled && (
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.regular, fontSize: 11, textAlign: 'center', marginTop: 8 }}>
+                  {t('debtShare.checkingAutomatically')}
+                </Text>
+              )}
+            </>
           )}
 
           {debt.status === 'CLAIMED_PAID' && (
@@ -425,7 +474,7 @@ export default function DebtorSharePage() {
                 {t('debtShare.markedAsPaid')}
               </Text>
               <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11.5, opacity: 0.85 }}>
-                {t('debtShare.willConfirm')}
+                {debt.fio_enabled ? t('debtShare.checkingAutomatically') : t('debtShare.willConfirm')}
               </Text>
               <Pressable onPress={undo}>
                 <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 6, textDecorationLine: 'underline', opacity: 0.7 }}>
@@ -438,8 +487,13 @@ export default function DebtorSharePage() {
           {debt.status === 'SETTLED' && (
             <View style={[styles.claimedBox, { backgroundColor: tokens.greenBg }]}>
               <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.bold, fontSize: 14 }}>
-                {t('debtShare.settledThankYou')}
+                {debt.settled_automatically ? t('debtShare.paymentReceived') : t('debtShare.settledThankYou')}
               </Text>
+              {debt.settled_automatically && (
+                <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 3, opacity: 0.85 }}>
+                  {t('debtShare.paymentReceivedBody')}
+                </Text>
+              )}
             </View>
           )}
         </ScrollView>
@@ -458,12 +512,12 @@ const styles = StyleSheet.create({
   langSwitch: { flexDirection: 'row', borderWidth: 1, borderRadius: 8, overflow: 'hidden' },
   langBtn: { paddingHorizontal: 9, paddingVertical: 6 },
   // Used as a ScrollView's contentContainerStyle — flexGrow (not flex) so
-  // short content still fills the viewport height (letting the flex:1
-  // spacer below push the primary button to the bottom), while content
-  // taller than the viewport scrolls instead of clipping off the bottom.
+  // content taller than the viewport scrolls instead of clipping off the
+  // bottom. The primary button now sits directly under the QR box (CTA
+  // text above it) rather than being pushed to the page bottom.
   //
   // Every element on this screen was deliberately sized/spaced down (see
-  // each inline style above) so the WHOLE page — avatar through the "I
+  // each inline style above) so the WHOLE page — pill through the "I
   // paid this" button — fits inside a single small-phone viewport without
   // scrolling in the common case; that's the actual fix for "the user
   // won't know to scroll". This ScrollView wrapper stays only as a safety
@@ -474,7 +528,7 @@ const styles = StyleSheet.create({
   // cases off-screen with no way to reach them — the exact bug this
   // replaced — so it's kept even though it should rarely if ever trigger.
   body: { flexGrow: 1, alignItems: 'center', paddingBottom: 12 },
-  avatar: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
+  pill: { paddingHorizontal: 16, paddingVertical: 7, borderRadius: 999, marginBottom: 8 },
   primaryBtn: { width: '100%', paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
   claimedBox: { width: '100%', paddingVertical: 13, borderRadius: 14, alignItems: 'center' },
   qrBox: { alignItems: 'center', padding: 12, borderRadius: 16, borderWidth: 1, marginTop: 10, width: '100%' },
