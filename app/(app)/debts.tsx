@@ -117,7 +117,11 @@ export default function Debts() {
       const { data, error } = await supabase.functions.invoke('check-fio-payments', { body: {} });
       setFioBusy(false);
       const settledN = data?.settled ?? 0;
-      const problem = error ? 'unreachable' : data?.errors?.[0];
+      // FunctionsHttpError carries the Response (HTTP status); a fetch-level
+      // failure (no response at all) is what an undeployed or crashing
+      // function looks like from the browser.
+      const status = (error as { context?: { status?: number } } | null)?.context?.status;
+      const problem = error ? (status ? `http_${status}` : 'no response — is check-fio-payments deployed?') : data?.errors?.[0];
       if (settledN > 0) {
         setFioMsg(t('debts.fioSettledN').replace('{n}', String(settledN)));
         load();
