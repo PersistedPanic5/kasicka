@@ -8,7 +8,9 @@ import { useLanguage } from '@/lib/language-context';
 import { budgetMonthForDate } from '@/lib/budget-month';
 import { buildMergedFromSnapshot, mergeDebtMessages } from '@/lib/debt-merge';
 import { identityColorFor, withAlpha } from '@/lib/identity';
-import type { DebtStatus, MergedDebtSnapshot } from '@/types/database';
+import { useAppData } from '@/lib/use-app-data';
+import { TransactionEditor, type TransactionRow } from '@/components/TransactionEditor';
+import type { DebtStatus, EventRow, MergedDebtSnapshot } from '@/types/database';
 
 type DebtRow = {
   id: string;
@@ -53,6 +55,11 @@ export default function Debts() {
   const { t } = useLanguage();
   const { user } = useAuth();
   const [debts, setDebts] = useState<DebtRow[]>([]);
+  // "Edit expense" opens the same shared edit menu as Transactions/Overview
+  // (components/TransactionEditor.tsx) for the expense a debt was split off.
+  const { categories, accounts } = useAppData();
+  const [allEvents, setAllEvents] = useState<EventRow[]>([]);
+  const [expense, setExpense] = useState<TransactionRow | null>(null);
   const [monthStartDay, setMonthStartDay] = useState(1);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -158,6 +165,25 @@ export default function Debts() {
       .maybeSingle()
       .then(({ data }) => setMonthStartDay(data?.month_start_day ?? 1));
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from('events')
+      .select('*')
+      .eq('owner_id', user.id)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => setAllEvents(data ?? []));
+  }, [user]);
+
+  async function openExpense(transactionId: string) {
+    const { data } = await supabase
+      .from('transactions')
+      .select('id, transaction_date, type, amount, note, status, category_id, account_id, event_id, receipt_photo_url, categories(name)')
+      .eq('id', transactionId)
+      .maybeSingle();
+    if (data) setExpense(data as unknown as TransactionRow);
+  }
 
   function shareLink(token: string) {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -609,6 +635,14 @@ export default function Debts() {
                 </Text>
               </Pressable>
             )}
+            {debt.transaction_id && (
+              <Pressable
+                onPress={() => openExpense(debt.transaction_id!)}
+                style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}
+              >
+                <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>{t('debts.editExpense')}</Text>
+              </Pressable>
+            )}
             <Pressable onPress={() => openEdit(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
               <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>{t('common.edit')}</Text>
             </Pressable>
@@ -928,6 +962,18 @@ export default function Debts() {
           </View>
         </View>
       </Modal>
+
+      {expense && (
+        <TransactionEditor
+          transaction={expense}
+          categories={categories}
+          accounts={accounts}
+          events={allEvents}
+          monthStartDay={monthStartDay}
+          onClose={() => setExpense(null)}
+          onChanged={load}
+        />
+      )}
     </View>
   );
 }

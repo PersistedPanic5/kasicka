@@ -31,7 +31,7 @@ export default function Transactions() {
   const { tokens } = useTheme();
   const { t: tr, language } = useLanguage();
   const { user } = useAuth();
-  const { categories } = useAppData();
+  const { categories, accounts } = useAppData();
 
   const [monthOffset, setMonthOffset] = useState(0);
   const [monthStartDay, setMonthStartDay] = useState<number | null>(null);
@@ -234,6 +234,7 @@ export default function Transactions() {
         <TransactionList
           transactions={filteredTransactions}
           categories={categories}
+          accounts={accounts}
           events={events}
           monthStartDay={monthStartDay}
           loading={loading}

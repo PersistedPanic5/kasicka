@@ -60,7 +60,7 @@ export default function Overview() {
   const { tokens } = useTheme();
   const { user } = useAuth();
   const { language, t } = useLanguage();
-  const { defaultAccountId } = useAppData();
+  const { defaultAccountId, accounts } = useAppData();
 
   const [monthOffset, setMonthOffset] = useState(0);
   const [monthStartDay, setMonthStartDay] = useState<number | null>(null);
@@ -683,6 +683,7 @@ export default function Overview() {
                         <TransactionList
                           transactions={categoryTx[cat.id] ?? []}
                           categories={categories}
+                          accounts={accounts}
                           events={events}
                           monthStartDay={monthStartDay}
                           loading={categoryTxLoading[cat.id] ?? false}
@@ -790,6 +791,7 @@ export default function Overview() {
                                           <TransactionList
                                             transactions={rowTx}
                                             categories={categories}
+                                            accounts={accounts}
                                             events={events}
                                             monthStartDay={monthStartDay}
                                             loading={eventTxLoading[ev.id] ?? false}

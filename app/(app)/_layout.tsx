@@ -19,6 +19,13 @@ const NAV_ITEMS = [
   { href: '/(app)/settings', labelKey: 'nav.settings' },
 ] as const;
 
+/** usePathname() returns the URL path ('/debts'), while NAV_ITEMS hrefs carry
+ * the route group ('/(app)/debts') — comparing them directly never matched,
+ * so no nav item was ever highlighted. Strip the group first. */
+function isActive(pathname: string, href: string): boolean {
+  return pathname === href.replace('/(app)', '');
+}
+
 /** Widest content is allowed to get under the nav — keeps every screen
  * readable and centered on a wide desktop window instead of stretching
  * edge-to-edge (Pavel: the entry form "loaded on computer screen on top
@@ -165,7 +172,7 @@ export default function AppLayout() {
               style={styles.navLinksScroll}
             >
               {NAV_ITEMS.map((item) => {
-                const active = pathname === item.href;
+                const active = isActive(pathname, item.href);
                 const color = active ? tokens.accentText : tokens.textMuted;
                 return (
                   <Link key={item.href} href={item.href} asChild>
@@ -208,7 +215,7 @@ export default function AppLayout() {
           <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)} />
           <View style={[styles.menuPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
             {NAV_ITEMS.map((item) => {
-              const active = pathname === item.href;
+              const active = isActive(pathname, item.href);
               const color = active ? tokens.accentText : tokens.text;
               return (
                 <Link key={item.href} href={item.href} asChild>
