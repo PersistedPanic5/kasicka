@@ -23,7 +23,7 @@ const DESCRIPTION =
   'Track spending, plan your monthly budget, and split debts with friends — Kasička keeps personal finance simple.';
 const SITE_URL = 'https://kasicka.eu';
 const OG_IMAGE_URL = `${SITE_URL}/og-image.png`;
-const THEME_COLOR = '#f8f7f2';
+const THEME_COLOR = '#171613'; // dark is the default theme (lib/theme-context.tsx)
 
 export default function Root({ children }: PropsWithChildren) {
   return (

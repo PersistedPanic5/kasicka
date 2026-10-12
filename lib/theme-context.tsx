@@ -1,5 +1,4 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
-import { useColorScheme } from 'react-native';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { palettes, ThemeMode, ThemeTokens } from './theme';
 
 interface ThemeContextValue {
@@ -11,25 +10,42 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
+const STORAGE_KEY = 'kasicka-theme';
+
 /**
- * Wraps the app so every screen can read the current palette and flip it —
- * matches the working light/dark toggle Pavel approved in every mockup.
- * Starts from the system color scheme, then remembers a manual override.
- * TODO(Phase 1): persist the override to `profile.theme` in Supabase once
- * auth/profile exist, instead of only living in memory per app launch.
+ * Wraps the app so every screen can read the current palette and flip it.
+ * Dark is the default (Pavel: "make dark mode a priority") — deliberately
+ * NOT the system scheme: the static web export is baked with this default,
+ * and a first client render that disagreed with it (e.g. system = light)
+ * left the public pages half-light, half-dark. A manual choice is kept in
+ * localStorage and applied in an effect, i.e. after hydration has matched.
+ * TODO(Phase 1): persist to `profile.theme` in Supabase instead.
  */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const system = useColorScheme();
-  const [override, setOverride] = useState<ThemeMode | null>(null);
-  const mode: ThemeMode = override ?? (system === 'dark' ? 'dark' : 'light');
+  const [mode, setMode] = useState<ThemeMode>('dark');
+
+  useEffect(() => {
+    try {
+      const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
+      if (saved === 'light' || saved === 'dark') setMode(saved);
+    } catch {}
+  }, []);
+
+  const choose = (m: ThemeMode) => {
+    setMode(m);
+    try {
+      localStorage.setItem(STORAGE_KEY, m);
+    } catch {}
+  };
 
   const value = useMemo<ThemeContextValue>(
     () => ({
       mode,
       tokens: palettes[mode],
-      toggle: () => setOverride(mode === 'dark' ? 'light' : 'dark'),
-      setMode: (m: ThemeMode) => setOverride(m),
+      toggle: () => choose(mode === 'dark' ? 'light' : 'dark'),
+      setMode: choose,
     }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- choose only closes over the setter
     [mode]
   );
 

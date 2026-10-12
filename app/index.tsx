@@ -6,6 +6,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
 import { LogoMark } from '@/components/Logo';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { AppFooter, BUY_ME_A_COFFEE_URL } from '@/components/AppFooter';
 import { categoryColor, identityColorFor, withAlpha } from '@/lib/identity';
 
@@ -68,7 +69,7 @@ function useHydratedWidth(): number | null {
 }
 
 export default function Landing() {
-  const { tokens } = useTheme();
+  const { tokens, mode } = useTheme();
   const { session, loading } = useAuth();
   // Clicking the logo from inside the app (see (app)/_layout.tsx and
   // (mobile)/index.tsx) links here with ?stay=1 — Pavel: "I need to have a
@@ -94,7 +95,11 @@ export default function Landing() {
     <SafeAreaView style={[styles.screen, { backgroundColor: tokens.bg }]} edges={['top', 'bottom']}>
       {!loading && session && !stay && <Redirect href={isDesktop ? '/(app)/home' : '/(mobile)'} />}
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.page}>
+        {/* key={mode}: a theme flip (including the saved choice being applied
+            right after hydration) remounts the page, because react-native-web
+            doesn't reliably repaint this statically-exported route in place
+            — see useHydratedWidth. */}
+        <View key={mode} style={styles.page}>
           <Header tokens={tokens} />
           <Hero tokens={tokens} wide={wide} />
           <PreviewSection tokens={tokens} wide={wide} />
@@ -125,11 +130,14 @@ function Header({ tokens }: { tokens: Tokens }) {
           to set an indexed property... CSSStyleDeclaration"), confirmed by
           bisection. (mobile)/index.tsx hit the same thing and already
           works around it the same way. */}
-      <Link href="/sign-in" asChild>
-        <Pressable style={StyleSheet.flatten([styles.headerSignIn, { borderColor: tokens.border }])}>
-          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>Sign in</Text>
-        </Pressable>
-      </Link>
+      <View style={styles.headerRight}>
+        <ThemeToggle size={34} />
+        <Link href="/sign-in" asChild>
+          <Pressable style={StyleSheet.flatten([styles.headerSignIn, { borderColor: tokens.border }])}>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>Sign in</Text>
+          </Pressable>
+        </Link>
+      </View>
     </View>
   );
 }
@@ -517,6 +525,7 @@ const styles = StyleSheet.create({
   page: { width: '100%', maxWidth: CONTENT_MAX_WIDTH, paddingHorizontal: 22 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 18, paddingBottom: 8 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerSignIn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
 
   hero: { alignItems: 'center', textAlign: 'center', paddingTop: 48, paddingBottom: 40 },
