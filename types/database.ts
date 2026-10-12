@@ -46,7 +46,14 @@ export type TransactionStatus = 'PAID' | 'VOID';
 /** MANUAL_PAYMENT added in 0014_manual_payments.sql — a one-off Payments →
  * ad-hoc payment confirmed paid, distinct from a plain Record-Expense
  * MANUAL entry (see lib/manual-payments.ts). */
-export type TransactionSource = 'MANUAL' | 'RECURRING' | 'LONG_TERM_QR' | 'DEBT_SETTLEMENT' | 'MANUAL_PAYMENT';
+export type TransactionSource =
+  | 'MANUAL'
+  | 'RECURRING'
+  | 'LONG_TERM_QR'
+  | 'DEBT_SETTLEMENT'
+  | 'MANUAL_PAYMENT'
+  /** Added in 0017_bank_inbox.sql — confirmed from the Bank inbox. */
+  | 'BANK_IMPORT';
 export type RecurringFrequency = 'MONTHLY' | 'YEARLY';
 export type ReserveAmountMode = 'AUTO' | 'MANUAL';
 /** MERGED added in 0011_debts_merge_supersede.sql — set on a debt that got
@@ -108,6 +115,17 @@ export interface Account {
   fio_last_checked_at: string | null;
   fio_last_success_at: string | null;
   fio_last_error: string | null;
+  /** 'BANK_INBOX' = movements arrive from the bank into the Bank inbox
+   * (needs bank_provider 'FIO'); 'MANUAL' = typed by hand. Migration 0017. */
+  entry_mode: 'MANUAL' | 'BANK_INBOX';
+  /** Never import movements booked before this day. */
+  fio_sync_from: string | null;
+  fio_synced_through: string | null;
+  bank_sync_minutes: 10 | 15 | 60;
+  bank_notify_push: boolean;
+  bank_notify_daily: boolean;
+  bank_last_digest_on: string | null;
+  bank_last_push_at: string | null;
 }
 export type AccountInsert = Partial<Account> & Pick<Account, 'owner_id' | 'name' | 'account_type'>;
 export type AccountUpdate = Partial<Account>;
@@ -166,6 +184,8 @@ export interface Transaction {
   /** Which event/trip this expense was tagged with, if any — see
    * supabase/migrations/0015_events.sql and claude/event-based-expenses-v1.md. */
   event_id: string | null;
+  /** Fio movement this transaction was confirmed from / linked to (0017). */
+  fio_movement_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -331,6 +351,53 @@ export interface EventRow {
 export type EventInsert = Partial<EventRow> & Pick<EventRow, 'owner_id' | 'name'>;
 export type EventUpdate = Partial<EventRow>;
 
+export type BankKind = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'CASH';
+export type BankStatus = 'NEW' | 'POSTED' | 'LINKED' | 'TRANSFER' | 'IGNORED' | 'DEBT';
+
+/** One movement from the bank feed, waiting in (or already decided from) the
+ * Bank inbox — migration 0017. Read-only for the app: changes go through the
+ * bank_post / bank_link / bank_decide functions. Amount is signed (negative =
+ * money out). */
+export interface BankTransaction {
+  id: string;
+  owner_id: string;
+  account_id: string;
+  movement_id: string;
+  booked_date: string;
+  amount: number;
+  merchant: string;
+  merchant_key: string;
+  counter_account: string | null;
+  counter_bank: string | null;
+  movement_type: string | null;
+  details: string | null;
+  vs: string | null;
+  kind: BankKind;
+  suggested_category_id: string | null;
+  suggested_uses: number | null;
+  /** The other own account for a TRANSFER, the Cash account for CASH. */
+  suggested_account_id: string | null;
+  recurring_item_id: string | null;
+  match_transaction_id: string | null;
+  status: BankStatus;
+  transaction_id: string | null;
+  to_account_id: string | null;
+  matched_debt_id: string | null;
+  created_at: string;
+}
+
+/** Remembered merchant -> category, learned when an inbox item is saved. */
+export interface BankRule {
+  id: string;
+  owner_id: string;
+  match_key: string;
+  category_id: string;
+  uses: number;
+  updated_at: string;
+}
+export type BankRuleInsert = Partial<BankRule> & Pick<BankRule, 'owner_id' | 'match_key' | 'category_id'>;
+export type BankRuleUpdate = Partial<BankRule>;
+
 /** A browser/device that has granted Web Push permission — see
  * supabase/migrations/0004_recurring_and_push.sql and lib/push.ts. Mirrors
  * the standard PushSubscription shape (endpoint + the two encryption keys
@@ -399,6 +466,8 @@ export interface Database {
       long_term_items: { Row: LongTermItem; Insert: LongTermItemInsert; Update: LongTermItemUpdate };
       debts: { Row: Debt; Insert: DebtInsert; Update: DebtUpdate };
       events: { Row: EventRow; Insert: EventInsert; Update: EventUpdate };
+      bank_transactions: { Row: BankTransaction; Insert: never; Update: never };
+      bank_rules: { Row: BankRule; Insert: BankRuleInsert; Update: BankRuleUpdate };
       push_subscriptions: {
         Row: PushSubscriptionRow;
         Insert: PushSubscriptionInsert;
@@ -423,6 +492,20 @@ export interface Database {
       };
       undo_claim_debt_paid: {
         Args: { p_token: string };
+        Returns: void;
+      };
+      // From supabase/migrations/0017_bank_inbox.sql — the only way the app
+      // changes a bank_transactions row.
+      bank_post: {
+        Args: { p_id: string; p_category_id: string | null; p_event_id: string | null; p_note: string | null };
+        Returns: string;
+      };
+      bank_link: {
+        Args: { p_id: string; p_transaction_id: string };
+        Returns: void;
+      };
+      bank_decide: {
+        Args: { p_id: string; p_status: 'IGNORED' | 'TRANSFER' | 'NEW'; p_to_account: string | null };
         Returns: void;
       };
     };

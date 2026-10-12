@@ -7,6 +7,7 @@ import { fontFamily } from '@/lib/theme';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { LogoMark } from '@/components/Logo';
 import { AppFooter } from '@/components/AppFooter';
+import { BankBadge, BankStrip } from '@/components/BankStrip';
 import { ExpenseEntryForm } from '@/components/ExpenseEntryForm';
 import { useLanguage } from '@/lib/language-context';
 
@@ -37,6 +38,7 @@ export default function MobileFastEntry() {
             </Pressable>
           </Link>
           <View style={styles.headerIcons}>
+            <BankBadge />
             <Link href="/(app)/home" asChild>
               <Pressable
                 style={StyleSheet.flatten([
@@ -76,6 +78,7 @@ export default function MobileFastEntry() {
           contentContainerStyle={styles.formWrap}
           keyboardShouldPersistTaps="handled"
         >
+          <BankStrip withHint />
           <ExpenseEntryForm variant="mobile" />
         </ScrollView>
 
@@ -90,7 +93,7 @@ const styles = StyleSheet.create({
   inner: { flex: 1, width: '100%', maxWidth: 480 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 30 },
   brand: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerIcons: { flexDirection: 'row', gap: 8 },
+  headerIcons: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   iconBtn: { width: 34, height: 34, borderRadius: 11, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   // flex: 1 + minHeight: 0 on the ScrollView itself — same fix as
   // (app)/_layout.tsx's contentInner — is what lets it actually clamp to

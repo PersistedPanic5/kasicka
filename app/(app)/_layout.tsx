@@ -8,6 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import { LogoMark } from '@/components/Logo';
 import { AppFooter } from '@/components/AppFooter';
 import { useLanguage } from '@/lib/language-context';
+import { useBankPending } from '@/lib/bank';
 
 const NAV_ITEMS = [
   { href: '/(app)/home', labelKey: 'nav.home' },
@@ -18,6 +19,19 @@ const NAV_ITEMS = [
   { href: '/(app)/planning', labelKey: 'nav.planning' },
   { href: '/(app)/settings', labelKey: 'nav.settings' },
 ] as const;
+
+/** "Bank" sits after Transactions, and only shows once an account is in Bank
+ * inbox mode (see lib/bank.ts useBankPending). */
+const BANK_ITEM = { href: '/(app)/bank', labelKey: 'nav.bank' } as const;
+type NavItem = (typeof NAV_ITEMS)[number] | typeof BANK_ITEM;
+
+function CountBadge({ n, bg, fg }: { n: number; bg: string; fg: string }) {
+  return (
+    <View style={{ minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: fg, fontFamily: fontFamily.extrabold, fontSize: 11 }}>{n}</Text>
+    </View>
+  );
+}
 
 /** usePathname() returns the URL path ('/debts'), while NAV_ITEMS hrefs carry
  * the route group ('/(app)/debts') — comparing them directly never matched,
@@ -65,6 +79,11 @@ const NAV_ICONS: Record<string, (color: string) => ReactElement> = {
       <Circle cx="3.4" cy="6" r="1.1" fill={color} stroke="none" />
       <Circle cx="3.4" cy="12" r="1.1" fill={color} stroke="none" />
       <Circle cx="3.4" cy="18" r="1.1" fill={color} stroke="none" />
+    </Svg>
+  ),
+  '/(app)/bank': (color) => (
+    <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 21h18" />
     </Svg>
   ),
   '/(app)/overview': (color) => (
@@ -119,9 +138,16 @@ export default function AppLayout() {
   const { width } = useWindowDimensions();
   const narrow = width < NARROW_BREAKPOINT;
 
+  const bank = useBankPending();
+  const navItems: NavItem[] = bank.enabled
+    ? [...NAV_ITEMS.slice(0, 4), BANK_ITEM, ...NAV_ITEMS.slice(4)]
+    : [...NAV_ITEMS];
+
   const [menuOpen, setMenuOpen] = useState(false);
   useEffect(() => {
     setMenuOpen(false);
+    bank.refresh(); // the count changes while moving around (new items, saved items)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
   useEffect(() => {
     if (!narrow) setMenuOpen(false);
@@ -171,7 +197,7 @@ export default function AppLayout() {
               contentContainerStyle={styles.navLinks}
               style={styles.navLinksScroll}
             >
-              {NAV_ITEMS.map((item) => {
+              {navItems.map((item) => {
                 const active = isActive(pathname, item.href);
                 const color = active ? tokens.accentText : tokens.textMuted;
                 return (
@@ -184,6 +210,7 @@ export default function AppLayout() {
                     >
                       {NAV_ICONS[item.href]?.(color)}
                       <Text style={{ color, fontFamily: fontFamily.bold, fontSize: 13 }}>{t(item.labelKey)}</Text>
+                      {item.href === BANK_ITEM.href && bank.count > 0 && <CountBadge n={bank.count} bg={active ? tokens.accentText : tokens.accent} fg={active ? tokens.accent : tokens.accentText} />}
                     </Pressable>
                   </Link>
                 );
@@ -214,7 +241,7 @@ export default function AppLayout() {
         <>
           <Pressable style={styles.menuBackdrop} onPress={() => setMenuOpen(false)} />
           <View style={[styles.menuPanel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const active = isActive(pathname, item.href);
               const color = active ? tokens.accentText : tokens.text;
               return (
@@ -235,6 +262,7 @@ export default function AppLayout() {
                     >
                       {t(item.labelKey)}
                     </Text>
+                    {item.href === BANK_ITEM.href && bank.count > 0 && <CountBadge n={bank.count} bg={active ? tokens.accentText : tokens.accent} fg={active ? tokens.accent : tokens.accentText} />}
                   </Pressable>
                 </Link>
               );

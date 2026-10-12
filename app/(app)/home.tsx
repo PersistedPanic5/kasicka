@@ -3,6 +3,7 @@ import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useLanguage } from '@/lib/language-context';
 import { ExpenseEntryForm } from '@/components/ExpenseEntryForm';
+import { BankStrip } from '@/components/BankStrip';
 
 export default function DesktopHome() {
   const { tokens } = useTheme();
@@ -34,6 +35,7 @@ export default function DesktopHome() {
         contentContainerStyle={styles.formWrap}
         keyboardShouldPersistTaps="handled"
       >
+        <BankStrip />
         <ExpenseEntryForm variant="desktop" />
       </ScrollView>
     </View>

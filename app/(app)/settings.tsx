@@ -6,6 +6,7 @@ import { fontFamily } from '@/lib/theme';
 import { useAuth } from '@/lib/auth-context';
 import { useLanguage } from '@/lib/language-context';
 import { supabase } from '@/lib/supabase';
+import { BankModeSettings } from '@/components/BankModeSettings';
 import { isPushSupported, subscribeToPush, unsubscribeFromPush, getPushSubscriptionState } from '@/lib/push';
 import { COMMON_CURRENCIES, downloadRateRange, ensureRate, type ResolvedRate } from '@/lib/exchange-rates';
 import type { Language } from '@/lib/i18n';
@@ -889,6 +890,7 @@ export default function Settings() {
                         </View>
                       </View>
                     )}
+                    {acc.bank_provider === 'FIO' && fioEditId !== acc.id && <BankModeSettings account={acc} onChanged={load} />}
                   </View>
                 )}
               </View>
