@@ -149,7 +149,7 @@ function Hero({ tokens, wide }: { tokens: Tokens; wide: boolean }) {
       </Text>
       <Text style={[styles.heroSubtitle, { color: tokens.textMuted, fontSize: wide ? 17 : 15 }]}>
         Kasička is a small personal-finance tool for logging expenses, planning a monthly budget, and
-        settling who-owes-who with friends — with a real Czech QR payment code, not another spreadsheet.
+        settling who-owes-who with friends — with a real Czech QR payment code. Link your Fio account and payments show up by themselves.
       </Text>
 
       {/* The hero graphic: the same big-number-behind-a-watermark motif as
@@ -223,6 +223,11 @@ function PreviewSection({ tokens, wide }: { tokens: Tokens; wide: boolean }) {
       title: 'Split it, without the group chat math',
       body: "Flag part of any expense as owed by someone else. They get a real payment QR code and can mark it paid — no account, no app install.",
       panel: <DebtsPreviewPanel tokens={tokens} />,
+    },
+    {
+      title: 'Let your bank do the typing',
+      body: 'Connect a Fio account and card payments land in a Bank inbox. You only pick the category — Kasička remembers the merchant next time. Nothing is saved until you confirm it, and transfers between your own accounts never touch your budget.',
+      panel: <BankPreviewPanel tokens={tokens} />,
     },
   ];
 
@@ -378,12 +383,49 @@ function DebtsPreviewPanel({ tokens }: { tokens: Tokens }) {
   );
 }
 
+function BankPreviewPanel({ tokens }: { tokens: Tokens }) {
+  const cats = ['Food', 'Fun', 'Other'];
+  return (
+    <View style={[styles.panel, { backgroundColor: tokens.card, borderColor: tokens.border }]}>
+      <View style={[styles.previewDebtCard, { backgroundColor: tokens.cardAlt, marginBottom: 8 }]}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>Albert Praha</Text>
+          <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 1 }}>
+            Card payment · today
+          </Text>
+        </View>
+        <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 13, fontVariant: ['tabular-nums'] }}>
+          −486 Kč
+        </Text>
+      </View>
+      <View style={[styles.previewCategoryGrid, { marginBottom: 10 }]}>
+        {cats.map((name, i) => (
+          <View key={name} style={[styles.previewCategoryChip, { backgroundColor: i === 0 ? tokens.accent : tokens.cardAlt }]}>
+            <Text style={{ color: i === 0 ? tokens.accentText : tokens.text, fontFamily: fontFamily.semibold, fontSize: 10.5 }}>
+              {name}
+            </Text>
+          </View>
+        ))}
+      </View>
+      <View style={[styles.previewSaveBtn, { backgroundColor: tokens.accent }]}>
+        <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 12 }}>Save to Food</Text>
+      </View>
+    </View>
+  );
+}
+
 function FeaturesSection({ tokens, wide }: { tokens: Tokens; wide: boolean }) {
   const features = [
     { title: 'Fast entry', body: 'Quick-amount buttons and category chips — most expenses are one tap plus a number.' },
     { title: 'Monthly budgets', body: 'Budget-vs-actual by category, so you know where the month stands before it ends.' },
     { title: 'Recurring & long-term', body: 'Bills that repeat and savings goals that build up over time, tracked automatically.' },
     { title: 'Split with friends', body: 'A real Czech QR payment code per debt, and a link that works for anyone, no account needed.' },
+    { title: 'Debts settle themselves', body: 'With Fio connected, a friend’s payment is matched by its variable symbol and the debt is marked paid — their page updates live.' },
+    { title: 'Bank inbox', body: 'Fio payments arrive every 10–60 minutes, with optional push notifications. Pick a category, confirm, done. Cash withdrawals move to your Cash account.' },
+    { title: 'Events and trips', body: 'Group the costs of a holiday or a party under one event and see what it really cost.' },
+    { title: 'Other currencies', body: 'Log an expense in euros, dollars and more — it’s converted to CZK at that day’s rate, and the original amount is kept.' },
+    { title: 'Czech and English', body: 'Switch the language any time, in the app and on shared debt pages.' },
+    { title: 'Edit anything', body: 'Fix an amount, category or date after the fact, and attach a receipt photo to any expense.' },
     { title: 'Works like an app', body: 'Add it to your home screen and use it like a native app — no app store, no install.' },
     { title: 'Yours, privately', body: 'Signed in with Google, your data is tied to your account alone — nothing shared, nothing sold.' },
   ];
@@ -447,7 +489,7 @@ function AboutSupportSection({ tokens, wide }: { tokens: Tokens; wide: boolean }
 function LegalSection({ tokens }: { tokens: Tokens }) {
   const paragraphs = [
     'Kasička is provided as-is, free of charge, with no warranty of any kind. I can’t guarantee it will always be available, error-free, or fit for any particular purpose, and I’m not liable for any loss, damage, or missed payment arising from its use — including anything to do with the amounts, budgets, or debts you track here. This isn’t legal advice; if you need something more formal, talk to a professional.',
-    'Your data is stored in a private Supabase project and tied to your own Google-signed-in account — I don’t sell it, share it, or look at it beyond what’s needed to keep the app running and fix bugs. A public debt-share link reveals only what you choose to share (an amount, a note, a payment QR code) — never your account.',
+    'Your data is stored in a private Supabase project and tied to your own Google-signed-in account — I don’t sell it, share it, or look at it beyond what’s needed to keep the app running and fix bugs. If you connect Fio, the read-only token is stored write-only (the app can’t show it back to you) and is used only to read your movements; Kasička can never move money. A public debt-share link reveals only what you choose to share (an amount, a note, a payment QR code) — never your account.',
     'This runs on free hosting and database tiers. If that ever needs to change, I’ll say so clearly here rather than let it be a surprise.',
     'This is a personal project, not a company — there’s no support team, and features come and go as I have time for them. Please don’t treat it as your only financial record.',
   ];
@@ -518,6 +560,7 @@ const styles = StyleSheet.create({
 
   previewDebtCard: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 14, padding: 10, marginBottom: 10 },
   previewAvatar: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  previewSaveBtn: { height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   previewShareRow: { borderWidth: 1, borderRadius: 12, borderStyle: 'dashed', padding: 10, gap: 4 },
 
   featureDot: { width: 10, height: 10, borderRadius: 5, marginTop: 5, flexShrink: 0 },
