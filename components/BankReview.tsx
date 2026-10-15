@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { useTheme } from '@/lib/theme-context';
 import { fontFamily } from '@/lib/theme';
 import { useLanguage } from '@/lib/language-context';
 import { categoryColor } from '@/lib/identity';
 import { dayLabel, formatKc } from '@/lib/bank';
+import { emptyExtras, NoteField, PhotoField, SplitFields, splitProblem, type Extras } from '@/components/BankExtras';
+import type { DebtHistory } from '@/lib/split-people';
 import type { BankTransaction } from '@/types/database';
 
 export type BankRow = Pick<
@@ -111,8 +113,8 @@ export function ReviewCard({
   total,
   categories,
   events,
+  history,
   onSave,
-  onSaveAndEdit,
   onOwnTransfer,
   onIgnore,
   onSkip,
@@ -123,8 +125,8 @@ export function ReviewCard({
   total: number;
   categories: Named[];
   events: Named[];
-  onSave: (categoryId: string | null, eventId: string | null, note: string) => Promise<void>;
-  onSaveAndEdit: (categoryId: string | null, eventId: string | null, note: string, split: boolean) => Promise<void>;
+  history: DebtHistory;
+  onSave: (categoryId: string | null, eventId: string | null, extras: Extras) => Promise<void>;
   onOwnTransfer: () => void;
   onIgnore: () => void;
   onSkip: () => void;
@@ -135,8 +137,8 @@ export function ReviewCard({
   const expense = row.amount < 0;
   const [categoryId, setCategoryId] = useState<string | null>(row.suggested_category_id);
   const [eventId, setEventId] = useState<string | null>(null);
-  const [note, setNote] = useState('');
-  const [panel, setPanel] = useState<'event' | 'note' | null>(null);
+  const [extras, setExtras] = useState<Extras>(emptyExtras);
+  const [panel, setPanel] = useState<'event' | 'note' | 'split' | 'photo' | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -145,6 +147,8 @@ export function ReviewCard({
 
   async function run(fn: () => Promise<void>) {
     if (!ready || busy) return;
+    const bad = expense ? splitProblem(extras, Math.abs(row.amount)) : null;
+    if (bad) return setError(t(bad));
     setBusy(true);
     setError(null);
     try {
@@ -159,7 +163,7 @@ export function ReviewCard({
     { key: 'event', label: t('bank.toolEvent'), show: events.length > 0 },
     { key: 'split', label: t('bank.toolSplit'), show: expense },
     { key: 'note', label: t('bank.toolNote'), show: true },
-    { key: 'photo', label: t('bank.toolPhoto'), show: expense },
+    { key: 'photo', label: t('bank.toolPhoto'), show: true },
   ];
 
   return (
@@ -226,16 +230,13 @@ export function ReviewCard({
           {tools
             .filter((x) => x.show)
             .map((x) => {
-              const active = (x.key === 'event' && (panel === 'event' || !!eventId)) || (x.key === 'note' && (panel === 'note' || !!note));
+              const filled = { event: !!eventId, note: !!extras.note.trim(), split: extras.splitOn, photo: !!extras.photoPath }[x.key];
+              const active = panel === x.key || filled;
               return (
                 <Pressable
                   key={x.key}
                   disabled={busy}
-                  onPress={() => {
-                    if (x.key === 'event') setPanel(panel === 'event' ? null : 'event');
-                    else if (x.key === 'note') setPanel(panel === 'note' ? null : 'note');
-                    else run(() => onSaveAndEdit(categoryId, eventId, note, x.key === 'split'));
-                  }}
+                  onPress={() => setPanel(panel === x.key ? null : x.key)}
                   style={[s.tool, { borderColor: active ? tokens.accent : tokens.border, backgroundColor: active ? tokens.greenBg : 'transparent' }]}
                 >
                   <Icon d={ICON[x.key]} color={tokens.text} extra={x.key === 'event' ? 'event' : x.key === 'split' ? 'person' : x.key === 'photo' ? 'photo' : undefined} />
@@ -261,21 +262,15 @@ export function ReviewCard({
             })}
           </View>
         )}
-        {panel === 'note' && (
-          <TextInput
-            value={note}
-            onChangeText={setNote}
-            placeholder={t('bank.notePlaceholder')}
-            placeholderTextColor={tokens.textMuted}
-            style={[s.input, { borderColor: tokens.border, backgroundColor: tokens.cardAlt, color: tokens.text }]}
-          />
-        )}
+        {panel === 'note' && <NoteField value={extras} onChange={setExtras} />}
+        {panel === 'split' && <SplitFields value={extras} onChange={setExtras} amount={Math.abs(row.amount)} history={history} />}
+        {panel === 'photo' && <PhotoField value={extras} onChange={setExtras} />}
         {error && <Text style={{ color: tokens.coral, fontFamily: fontFamily.semibold, fontSize: 13 }}>{error}</Text>}
       </ScrollView>
 
       <View style={{ gap: 10 }}>
         <Pressable
-          onPress={() => run(() => onSave(categoryId, eventId, note))}
+          onPress={() => run(() => onSave(categoryId, eventId, extras))}
           disabled={!ready || busy}
           style={[s.primary, { backgroundColor: tokens.accent, opacity: ready && !busy ? 1 : 0.45 }]}
         >
@@ -312,7 +307,6 @@ const s = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 5 },
   tools: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   tool: { flexGrow: 1, flexBasis: 80, height: 44, borderRadius: 12, borderWidth: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 },
-  input: { height: 48, borderRadius: 12, borderWidth: 1, paddingHorizontal: 14, fontFamily: fontFamily.semibold, fontSize: 15 },
   primary: { height: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   secondary: { height: 48, borderRadius: 14, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   textBtn: { flex: 1, height: 44, alignItems: 'center', justifyContent: 'center' },

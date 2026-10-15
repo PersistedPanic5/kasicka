@@ -10,10 +10,13 @@ import { useLanguage } from '@/lib/language-context';
 import { BANK_COLUMNS, dayLabel, formatKc, isPlain, syncBank, useBankPending } from '@/lib/bank';
 import { categoryColor } from '@/lib/identity';
 import { MatchSheet, ReviewCard, type BankRow } from '@/components/BankReview';
-import { TransactionEditor, type TransactionRow } from '@/components/TransactionEditor';
+import { applyExtras, emptyExtras, ExtrasAll, hasExtras, splitProblem, type Extras } from '@/components/BankExtras';
+import { useDebtHistory } from '@/lib/split-people';
 
 type Entry = { transaction_date: string; note: string | null; amount: number; category: string | null };
 const SAVED = ['POSTED', 'LINKED', 'TRANSFER', 'IGNORED', 'DEBT'];
+/** an error whose text is already fit to show the user */
+class Friendly extends Error {}
 
 /**
  * The Bank inbox (claude/fio-everyday-mode-v1.md, Design: "Kasička Bank
@@ -30,8 +33,9 @@ export default function Bank() {
   const { user } = useAuth();
   const { width } = useWindowDimensions();
   const wide = width >= 900;
-  const { categories, accounts, activeEvents, monthStartDay } = useAppData();
+  const { categories, accounts, activeEvents } = useAppData();
   const pending = useBankPending();
+  const history = useDebtHistory();
 
   const [tab, setTab] = useState<'review' | 'saved'>('review');
   const [items, setItems] = useState<BankRow[]>([]);
@@ -42,6 +46,8 @@ export default function Bank() {
   // per-row choices on the desktop table
   const [cat, setCat] = useState<Record<string, string | null>>({});
   const [ev, setEv] = useState<Record<string, string | null>>({});
+  const [extras, setExtras] = useState<Record<string, Extras>>({});
+  const [openRow, setOpenRow] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [dismissedMatch, setDismissedMatch] = useState<Set<string>>(new Set());
   const [matchRow, setMatchRow] = useState<BankRow | null>(null);
@@ -49,7 +55,6 @@ export default function Bank() {
   // phone review flow
   const [queue, setQueue] = useState<string[] | null>(null);
   const [pos, setPos] = useState(0);
-  const [editor, setEditor] = useState<{ tx: TransactionRow; split: boolean } | null>(null);
 
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -135,10 +140,18 @@ export default function Bank() {
   };
 
   // ── actions (all go through the bank_* SQL functions) ───────────────────
-  const post = async (r: BankRow, categoryId: string | null, eventId: string | null, note = '') => {
-    const { data, error } = await supabase.rpc('bank_post', { p_id: r.id, p_category_id: categoryId, p_event_id: eventId, p_note: note.trim() || null });
+  const post = async (r: BankRow, categoryId: string | null, eventId: string | null, x?: Extras) => {
+    const bad = r.amount < 0 ? splitProblem(x, Math.abs(r.amount)) : null;
+    if (bad) throw new Friendly(t(bad));
+    const { data, error } = await supabase.rpc('bank_post', { p_id: r.id, p_category_id: categoryId, p_event_id: eventId, p_note: x?.note.trim() || null });
     if (error) throw error;
-    return data as string;
+    const txId = data as string;
+    if (hasExtras(x) && user) {
+      const res = await applyExtras({ ownerId: user.id, transactionId: txId, accountId: r.account_id, eventId, extras: x, history, currencyLabel: t('common.czk') });
+      if (res.error) setMsg(`${t('bank.splitPartial')} ${res.error}`);
+      else if (res.debts) setMsg(t('bank.splitCreated').replace('{n}', String(res.debts)));
+    }
+    return txId;
   };
   const decide = async (r: BankRow, status: 'IGNORED' | 'TRANSFER' | 'NEW', to: string | null = null) => {
     const { error } = await supabase.rpc('bank_decide', { p_id: r.id, p_status: status, p_to_account: to });
@@ -154,8 +167,8 @@ export default function Bank() {
     setMsg(null);
     try {
       await fn();
-    } catch {
-      setMsg(t('bank.saveFailed'));
+    } catch (e) {
+      setMsg(e instanceof Friendly ? e.message : t('bank.saveFailed'));
     }
     setBusy(false);
     refreshAll();
@@ -174,7 +187,7 @@ export default function Bank() {
 
   const saveSelected = () =>
     guarded(async () => {
-      for (const r of selRows) if (r.amount > 0 || cat[r.id]) await post(r, r.amount < 0 ? cat[r.id] : null, ev[r.id] ?? null);
+      for (const r of selRows) if (r.amount > 0 || cat[r.id]) await post(r, r.amount < 0 ? cat[r.id] : null, ev[r.id] ?? null, extras[r.id]);
       setSelected(new Set());
     });
   const ignoreSelected = () =>
@@ -219,25 +232,15 @@ export default function Bank() {
           total={queued.length}
           categories={categories}
           events={activeEvents}
+          history={history}
           onBack={() => {
             setQueue(null);
             refreshAll();
           }}
-          onSave={async (c, e, n) => {
-            await post(current, c, e, n);
+          onSave={async (c, e, x) => {
+            await post(current, c, e, x);
             leave(current.id);
             refreshAll();
-          }}
-          onSaveAndEdit={async (c, e, n, split) => {
-            const txId = await post(current, c, e, n);
-            const { data } = await supabase
-              .from('transactions')
-              .select('id, transaction_date, type, amount, note, status, category_id, account_id, event_id, receipt_photo_url, categories(name)')
-              .eq('id', txId)
-              .maybeSingle();
-            leave(current.id);
-            refreshAll();
-            if (data) setEditor({ tx: data as unknown as TransactionRow, split });
           }}
           onOwnTransfer={() => guarded(async () => {
             await decide(current, 'TRANSFER', current.suggested_account_id);
@@ -259,18 +262,6 @@ export default function Bank() {
               leave(current.id);
             })}
             onNo={() => setDismissedMatch((p) => new Set(p).add(current.id))}
-          />
-        )}
-        {editor && (
-          <TransactionEditor
-            transaction={editor.tx}
-            categories={categories}
-            accounts={accounts}
-            events={activeEvents}
-            monthStartDay={monthStartDay}
-            expandSplit={editor.split}
-            onClose={() => setEditor(null)}
-            onChanged={() => {}}
           />
         )}
       </>
@@ -358,7 +349,8 @@ export default function Bank() {
               const hasMatch = !!r.match_transaction_id && !dismissedMatch.has(r.id);
               const bg = r.kind === 'INCOME' ? tokens.greenBg : r.kind === 'TRANSFER' || r.kind === 'CASH' || (r.amount < 0 && !cat[r.id]) ? tokens.amberBg : 'transparent';
               return (
-                <View key={r.id} style={[s.tr, { backgroundColor: bg, borderTopWidth: i ? 1 : 0, borderTopColor: tokens.border }]}>
+                <View key={r.id} style={{ borderTopWidth: i ? 1 : 0, borderTopColor: tokens.border }}>
+                <View style={[s.tr, { backgroundColor: bg }]}>
                   <Check on={selected.has(r.id)} onPress={() => toggle(r.id)} label={r.merchant} tokens={tokens} />
                   <Text style={[s.date, { color: tokens.text, width: 96 }]}>{dayLabel(r.booked_date, t)}</Text>
                   <View style={{ flex: 1, gap: 2 }}>
@@ -397,21 +389,43 @@ export default function Bank() {
                     ) : null}
                   </View>
                   <Text style={[s.amt, { color: r.amount < 0 ? tokens.text : tokens.greenFg, width: 100, textAlign: 'right' }]}>{formatKc(r.amount)}</Text>
-                  <View style={{ width: 150 }}>
+                  <View style={{ width: 150, flexDirection: 'row', gap: 6 }}>
+                    {!special && (
+                      <Pressable
+                        onPress={() => setOpenRow((p) => { const n = new Set(p); if (n.has(r.id)) n.delete(r.id); else n.add(r.id); return n; })}
+                        accessibilityLabel={t('bank.extras')}
+                        accessibilityState={{ expanded: openRow.has(r.id) }}
+                        style={[s.more, { borderColor: openRow.has(r.id) || hasExtras(extras[r.id]) ? tokens.accent : tokens.border, backgroundColor: hasExtras(extras[r.id]) ? tokens.greenBg : 'transparent' }]}
+                      >
+                        <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 18, lineHeight: 20 }}>{openRow.has(r.id) ? '−' : '+'}</Text>
+                      </Pressable>
+                    )}
                     <Pressable
                       disabled={busy || (r.kind === 'EXPENSE' && !hasMatch && !cat[r.id])}
                       onPress={() => {
                         if (hasMatch) return setMatchRow(r);
                         guarded(async () => {
                           if (r.kind === 'TRANSFER' || r.kind === 'CASH') await decide(r, 'TRANSFER', r.suggested_account_id);
-                          else await post(r, r.amount < 0 ? cat[r.id] : null, ev[r.id] ?? null);
+                          else await post(r, r.amount < 0 ? cat[r.id] : null, ev[r.id] ?? null, extras[r.id]);
                         });
                       }}
-                      style={[s.go, { borderColor: tokens.accentBorder, backgroundColor: tokens.cardAlt, opacity: busy || (r.kind === 'EXPENSE' && !hasMatch && !cat[r.id]) ? 0.45 : 1 }]}
+                      style={[s.go, { flex: 1, borderColor: tokens.accentBorder, backgroundColor: tokens.cardAlt, opacity: busy || (r.kind === 'EXPENSE' && !hasMatch && !cat[r.id]) ? 0.45 : 1 }]}
                     >
                       <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 14 }}>{primaryLabel(r, hasMatch, t)}</Text>
                     </Pressable>
                   </View>
+                </View>
+                {openRow.has(r.id) && !special && (
+                  <View style={[s.detail, { backgroundColor: tokens.cardAlt }]}>
+                    <ExtrasAll
+                      value={extras[r.id] ?? emptyExtras()}
+                      onChange={(x) => setExtras((p) => ({ ...p, [r.id]: x }))}
+                      amount={Math.abs(r.amount)}
+                      expense={r.amount < 0}
+                      history={history}
+                    />
+                  </View>
+                )}
                 </View>
               );
             })}
@@ -626,6 +640,8 @@ const s = StyleSheet.create({
   name: { fontFamily: fontFamily.extrabold, fontSize: 15 },
   sub: { fontFamily: fontFamily.medium, fontSize: 13 },
   amt: { fontFamily: fontFamily.extrabold, fontSize: 15 },
+  more: { width: 44, height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  detail: { paddingHorizontal: 16, paddingVertical: 14, maxWidth: 640 },
   go: { height: 44, borderRadius: 12, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
   checkWrap: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center', marginLeft: -10 },
   check: { width: 22, height: 22, borderRadius: 6, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },

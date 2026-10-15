@@ -50,10 +50,29 @@ export function pretty(raw: string): string {
   return s;
 }
 
+const CARD = /^(?:Nákup|Nakup|Platba kartou|Online platba)\s*:\s*([^,]+)/i;
+
+/** Fio puts the card text ("Nákup: SHOP, CITY, CZ, dne 13.10.2026, částka …") in
+ * different columns depending on the payment — take the first that looks like it. */
+const cardText = (t: FioTx) => [t.details, t.message, t.comment].find((x) => CARD.test(x)) ?? t.details;
+
+/**
+ * The day the card was actually used. Fio's own date is when the payment was
+ * BOOKED (often a day or two later); the purchase day is inside the text.
+ * Ignored unless it is sane: not after booking, at most 10 days before.
+ */
+export function paidOn(t: FioTx): string | null {
+  const m = /dne:?\s+(\d{1,2})\.\s?(\d{1,2})\.\s?(\d{4})/i.exec([t.details, t.message, t.comment].join(' '));
+  if (!m) return null;
+  const iso = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  const back = (Date.parse(t.date) - Date.parse(iso)) / 86_400_000;
+  return Number.isFinite(back) && back >= 0 && back <= 10 ? iso : null;
+}
+
 /** The merchant text as the bank wrote it (before prettifying). */
 export function rawMerchant(t: FioTx): string {
   // Card payments: "Nákup: ALBERT PRAHA 1042, PRAHA, CZ, dne 11.10.2026, ..."
-  const m = /^(?:Nákup|Nakup|Platba kartou|Online platba)\s*:\s*([^,]+)/i.exec(t.details);
+  const m = CARD.exec(cardText(t));
   if (m) return clean(m[1]);
   if (isAtm(t)) return clean(t.details.replace(/^[^:]*:\s*/, '').split(',')[0]) || 'ATM';
   return clean(t.counterName) || clean(t.message) || clean(t.comment) || clean(t.details) || clean(t.type) || 'Bank payment';
@@ -112,10 +131,11 @@ export function classify(t: FioTx, ctx: Ctx): BankRow {
   const merchant = pretty(raw) || 'Bank payment';
   const key = merchantKey(merchant);
   const out = t.amount < 0;
+  const day = paidOn(t) ?? t.date; // purchase day for cards, booking day otherwise
 
   const row: BankRow = {
     movement_id: t.id,
-    booked_date: t.date,
+    booked_date: day,
     amount: t.amount,
     merchant,
     merchant_key: key,
@@ -171,7 +191,7 @@ export function classify(t: FioTx, ctx: Ctx): BankRow {
   let best: { id: string; d: number } | null = null;
   for (const m of ctx.manual) {
     if (ctx.taken.has(m.id) || m.type !== wantType || Math.abs(Number(m.amount) - Math.abs(t.amount)) > 0.005) continue;
-    const d = dayDiff(m.transaction_date, t.date);
+    const d = dayDiff(m.transaction_date, day);
     if (d <= 3 && (!best || d < best.d)) best = { id: m.id, d };
   }
   if (best) {

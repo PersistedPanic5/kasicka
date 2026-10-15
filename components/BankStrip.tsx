@@ -18,7 +18,8 @@ export function BankBadge() {
     <Link href="/(app)/bank" asChild>
       <Pressable
         accessibilityLabel={`${t('nav.bank')} ${count}`}
-        style={[s.pill, { backgroundColor: count ? tokens.accent : tokens.card, borderColor: count ? tokens.accentBorder : tokens.border }]}
+        // StyleSheet.flatten: an array style on a `Link asChild` Pressable crashes web ("Failed to set an indexed property") and blanks the whole app
+        style={StyleSheet.flatten([s.pill, { backgroundColor: count ? tokens.accent : tokens.card, borderColor: count ? tokens.accentBorder : tokens.border }])}
       >
         <Svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke={count ? tokens.accentText : tokens.text} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
           <Path d="M3 10l9-6 9 6M5 10v8M10 10v8M14 10v8M19 10v8M3 21h18" />
@@ -68,7 +69,7 @@ export function BankStrip({ withHint = false }: { withHint?: boolean }) {
             </Text>
           </View>
           <Link href="/(app)/bank" asChild>
-            <Pressable style={[s.review, { borderColor: tokens.accentBorder, backgroundColor: tokens.cardAlt }]}>
+            <Pressable style={StyleSheet.flatten([s.review, { borderColor: tokens.accentBorder, backgroundColor: tokens.cardAlt }])}>
               <Text style={{ color: tokens.accent, fontFamily: fontFamily.extrabold, fontSize: 14 }}>{t('bank.fastReview')}</Text>
             </Pressable>
           </Link>

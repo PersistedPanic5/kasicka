@@ -77,6 +77,26 @@ const [x, y] = twice.map((t) => classify(t, dup));
 assert.equal(x.match_transaction_id, 'm1');
 assert.equal(y.match_transaction_id, null);
 
+// real Fio card payment: text in the message column, booked a day after the purchase
+const [alza, ikea] = parseFio({
+  accountStatement: {
+    transactionList: {
+      transaction: [
+        mv({ id: 9, amount: -149, date: '2026-10-14+0200', msg: 'Nákup: Alza.cz a.s., Prague, CZ, dne 13.10.2026, částka 149.00 CZK' }),
+        mv({ id: 10, amount: -100, date: '2026-10-14+0200', spec: 'Nákup: IKEA ZLICIN RESTAURA, Praha 13, CZ, dne 13.10.2026, částka 100.00 CZK' }),
+      ],
+    },
+  },
+}).map((t) => classify(t, ctx()));
+assert.equal(alza.merchant, 'Alza.cz a.s.');
+assert.equal(alza.merchant_key, 'alza cz');
+assert.equal(alza.booked_date, '2026-10-13'); // purchase day, not the booking day
+assert.equal(ikea.merchant, 'Ikea Zlicin Restaura');
+assert.equal(ikea.booked_date, '2026-10-13');
+// a nonsense date in the text (after booking) is ignored
+const odd = classify(parseFio({ accountStatement: { transactionList: { transaction: [mv({ id: 11, amount: -5, date: '2026-10-14+0200', spec: 'Nákup: X, dne 20.10.2026' })] } } })[0], ctx());
+assert.equal(odd.booked_date, '2026-10-14');
+
 assert.equal(pretty('ALBERT PRAHA 1042'), 'Albert Praha');
 assert.equal(pretty('Rohlik.cz'), 'Rohlik.cz');
 assert.equal(merchantKey('Albert Praha'), 'albert praha');
