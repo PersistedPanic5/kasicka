@@ -93,3 +93,8 @@ you to confirm by hand. Each Fio movement ID can settle only one debt.
 - Payments older than 90 days need a temporary unlock in internet banking.
 - If the same token is used by another tool, avoid the `last/` endpoints there
   (they move a shared cursor); this function uses `periods/` only.
+
+## Group bills (migration 0019)
+
+`{ "group_token": "<token>" }` (public, from `app/g/[token].tsx`) checks the group's account, same throttle as `share_token`.
+One-QR groups: an incoming payment with the group's variable symbol and at least one share settles the person who tapped "I paid" first (one payment = one person). Nobody tapped yet → left alone, matched on a later check.

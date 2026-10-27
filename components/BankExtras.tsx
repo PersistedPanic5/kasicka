@@ -6,6 +6,8 @@ import { useLanguage } from '@/lib/language-context';
 import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
+import { ShareModePicker } from '@/components/ShareModePicker';
+import { createGroupDebts, groupProblem, type ShareMode } from '@/lib/debt-groups';
 import {
   createOrMergeDebtsForSplit,
   emptySplitPerson,
@@ -33,6 +35,7 @@ export type Extras = {
   people: SplitPerson[];
   /** names (trimmed, lower-case) the user chose NOT to fold into an open debt */
   noMerge: string[];
+  shareMode: ShareMode;
 };
 
 export const emptyExtras = (): Extras => ({
@@ -44,6 +47,7 @@ export const emptyExtras = (): Extras => ({
   message: '',
   people: [emptySplitPerson()],
   noMerge: [],
+  shareMode: 'INDIVIDUAL',
 });
 
 export const hasExtras = (e?: Extras) => !!e && !!(e.note.trim() || e.photoPath || (e.splitOn && validSplitPeople(e.people).length));
@@ -55,7 +59,7 @@ export function splitProblem(e: Extras | undefined, amount: number): string | nu
   if (total <= 0) return null;
   if (total > amount) return 'home.splitTooBig';
   if (splitPeopleSum(e.people) > total + 0.01) return 'home.splitOverAllocatedError';
-  return null;
+  return groupProblem(e.shareMode, validSplitPeople(e.people));
 }
 
 /** After bank_post: attach the photo and create / merge the debts. Never throws. */
@@ -77,6 +81,18 @@ export async function applyExtras(p: {
   }
   const people = validSplitPeople(e.people);
   const total = Number(e.total) || 0;
+  if (e.splitOn && people.length && total > 0 && e.shareMode !== 'INDIVIDUAL') {
+    const g = await createGroupDebts({
+      ownerId: p.ownerId,
+      transactionId: p.transactionId,
+      eventId: p.eventId,
+      targetAccountId: p.accountId,
+      message: e.message.trim() || null,
+      mode: e.shareMode as 'ONE_QR' | 'PER_PERSON',
+      people,
+    });
+    return { debts: g.count, error: g.error ?? error };
+  }
   if (e.splitOn && people.length && total > 0) {
     const mergeNames = new Set(
       people.map((x) => x.name.trim().toLowerCase()).filter((n) => p.history.outstandingByName.has(n) && !e.noMerge.includes(n)),
@@ -266,7 +282,7 @@ export function SplitFields({
                 </Pressable>
               )}
             </View>
-            {open && (
+            {open && value.shareMode === 'INDIVIDUAL' && (
               <Tick
                 tokens={tokens}
                 on={!value.noMerge.includes(key)}
@@ -285,6 +301,7 @@ export function SplitFields({
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.bold, fontSize: 13 }}>{t('home.splitToggleOff')}</Text>
         </Pressable>
       </View>
+      <ShareModePicker value={value.shareMode} onChange={(shareMode) => onChange({ ...value, shareMode })} />
       <Text style={[s.hint, { color: tokens.textMuted }]}>{t('home.splitHint')}</Text>
     </View>
   );

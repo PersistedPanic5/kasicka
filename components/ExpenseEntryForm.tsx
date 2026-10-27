@@ -22,6 +22,8 @@ import {
   type SplitPerson,
 } from '@/lib/split-people';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
+import { ShareModePicker } from '@/components/ShareModePicker';
+import { createGroupDebts, groupLink, groupProblem, type ShareMode } from '@/lib/debt-groups';
 
 /** One split person's name matching an existing outstanding debt, offered
  * for merging at Save time — see the mergeOffer state below and
@@ -168,6 +170,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
+  const [shareMode, setShareMode] = useState<ShareMode>('INDIVIDUAL');
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
   const debtHistory = useDebtHistory();
   // Pavel: "if I select the already existing person - offer me to merge
@@ -366,6 +369,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setSplitEnabled(false);
     setSplitTotalAmount('');
     setSplitMessage('');
+    setShareMode('INDIVIDUAL');
     setSplitPeople([emptySplitPerson()]);
   }
 
@@ -424,6 +428,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       return;
     }
 
+    const grouped = splitting && shareMode !== 'INDIVIDUAL';
+    const problem = grouped ? groupProblem(shareMode, validPeople) : null;
+    if (problem) {
+      setErrorMsg(t(problem));
+      return;
+    }
+
     // Before actually saving anything, check whether any split person
     // matches someone who already has an outstanding debt — if so, pause
     // for confirmation instead of silently creating yet another separate
@@ -431,7 +442,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     // person with like 3 bills"). `offer` is only set when re-entering
     // from that modal's "Continue", so this never re-prompts for the same
     // save attempt.
-    if (splitting && !offer) {
+    if (splitting && !grouped && !offer) {
       const matches = validPeople
         .map((p): MergeOfferMatch | null => {
           const existing = debtHistory.outstandingByName.get(p.name.trim().toLowerCase());
@@ -482,7 +493,19 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
       return;
     }
 
-    if (splitting) {
+    if (splitting && grouped) {
+      const g = await createGroupDebts({
+        ownerId: user.id,
+        transactionId: transaction.id,
+        eventId,
+        targetAccountId: activeAccountId,
+        message: splitMessage.trim() || null,
+        mode: shareMode as 'ONE_QR' | 'PER_PERSON',
+        people: validPeople,
+      });
+      if (g.error) setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${g.error}`);
+      if (g.groupToken) setShareLinks([{ name: t('home.groupLinkName'), link: groupLink(g.groupToken) }]);
+    } else if (splitting) {
       // Created one by one (see lib/split-people.ts) — the expense itself
       // is already saved either way, so a partial failure here surfaces an
       // error without rolling anything back. A person opted into merging
@@ -930,6 +953,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
               {t('home.addPersonBtn')}
             </Text>
           </Pressable>
+
+          <ShareModePicker value={shareMode} onChange={setShareMode} />
 
           <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
             {t('home.splitHint')}

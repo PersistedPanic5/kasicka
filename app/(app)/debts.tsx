@@ -9,6 +9,7 @@ import { budgetMonthForDate } from '@/lib/budget-month';
 import { buildMergedFromSnapshot, mergeDebtMessages } from '@/lib/debt-merge';
 import { identityColorFor, withAlpha } from '@/lib/identity';
 import { useAppData } from '@/lib/use-app-data';
+import { groupLink } from '@/lib/debt-groups';
 import { TransactionEditor, type TransactionRow } from '@/components/TransactionEditor';
 import type { DebtStatus, EventRow, MergedDebtSnapshot } from '@/types/database';
 
@@ -29,6 +30,8 @@ type DebtRow = {
   merged_from: MergedDebtSnapshot[] | null;
   /** 'FIO' = settled automatically by check-fio-payments (migration 0016). */
   settled_via: 'FIO' | null;
+  /** One-link group bill this debt belongs to (migration 0019). */
+  group_id: string | null;
 };
 
 /**
@@ -89,13 +92,14 @@ export default function Debts() {
 
   type DebtFilter = 'ALL' | DebtStatus;
   const [filter, setFilter] = useState<DebtFilter>('ALL');
+  const [groupTokens, setGroupTokens] = useState<Map<string, string>>(new Map());
 
   const load = useCallback(async () => {
     setLoading(true);
     const { data } = await supabase
       .from('debts')
       .select(
-        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from, settled_via'
+        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from, settled_via, group_id'
       )
       // A debt folded into another one via merge (supabase/migrations/
       // 0011_debts_merge_supersede.sql) is history, not something to act
@@ -103,7 +107,10 @@ export default function Debts() {
       // visitors to the replacement) but has no place in this list.
       .neq('status', 'MERGED')
       .order('created_at', { ascending: false });
-    setDebts(data ?? []);
+    setDebts((data ?? []) as DebtRow[]);
+    // Group bills: one extra small query, only the tokens needed for "Copy group link".
+    const { data: gs } = await supabase.from('debt_groups').select('id, share_token');
+    setGroupTokens(new Map((gs ?? []).map((g) => [g.id, g.share_token])));
     setLoading(false);
   }, []);
 
@@ -192,8 +199,8 @@ export default function Debts() {
     return `/d/${token}`;
   }
 
-  async function copyLink(debt: DebtRow) {
-    const link = shareLink(debt.share_token);
+  async function copyLink(debt: DebtRow, group = false) {
+    const link = group && debt.group_id ? groupLink(groupTokens.get(debt.group_id) ?? '') : shareLink(debt.share_token);
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
       await navigator.clipboard.writeText(link);
       setCopiedId(debt.id);
@@ -541,7 +548,10 @@ export default function Debts() {
           </View>
 
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15 }}>{debt.owed_by_name}</Text>
+            <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15 }}>
+              {debt.owed_by_name}
+              {debt.group_id ? <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>{`  · ${t('debts.groupBadge')}`}</Text> : null}
+            </Text>
             <Text
               style={{
                 color: tokens.textMuted,
@@ -597,6 +607,13 @@ export default function Debts() {
                     {copiedId === debt.id ? t('common.copied') : t('common.copyLink')}
                   </Text>
                 </Pressable>
+                {debt.group_id && groupTokens.has(debt.group_id) && (
+                  <Pressable onPress={() => copyLink(debt, true)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+                    <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
+                      {copiedId === debt.id ? t('common.copied') : t('debts.copyGroupLink')}
+                    </Text>
+                  </Pressable>
+                )}
                 <Pressable onPress={() => openInNewTab(debt)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
                   <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12 }}>
                     {t('debts.openLink')}

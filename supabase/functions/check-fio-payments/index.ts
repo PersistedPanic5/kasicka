@@ -13,6 +13,7 @@
 //      Anonymous — it can only trigger a check of the account THAT debt is
 //      paid into, and it learns nothing but "ok". Safe because the work is
 //      throttled per account (below) no matter how many pages are open.
+//      Group pages (app/g/[token].tsx) do the same with { "group_token": "<token>" }.
 //   2. The signed-in owner (Debts page load + "Check Fio payments now"):
 //      {}  with the user's JWT -> checks every Fio account of that user
 //      that has open debts or is in Bank inbox mode, and returns a summary.
@@ -91,7 +92,7 @@ async function checkAccount(svc: Svc, accountId: string): Promise<Result> {
 
   const { data: debts } = await svc
     .from('debts')
-    .select('id, owner_id, owed_by_name, amount, payment_vs, created_at')
+    .select('id, owner_id, owed_by_name, amount, payment_vs, created_at, status, group_id, claimed_paid_at')
     .eq('target_account_id', accountId)
     .in('status', OPEN);
   if (!debts?.length && !inbox) return { status: 'idle', settled: 0, added: 0 };
@@ -180,6 +181,41 @@ async function checkAccount(svc: Svc, accountId: string): Promise<Result> {
       if (!error && ok) {
         settled++;
         debtByMovement.set(hit.id, d.id);
+      }
+    }
+  }
+
+  // ── 1b) one-QR group bills: a payment of one share with the GROUP's symbol
+  // settles the person who tapped "I paid" first. Nobody tapped yet -> the payment
+  // is left alone and matches on a later check, once somebody does (the lookback
+  // window always covers open debts). One payment settles one person.
+  const groupIds = [...new Set((debts ?? []).filter((d: { group_id: string | null }) => d.group_id).map((d: { group_id: string }) => d.group_id))];
+  if (groupIds.length && incoming.length) {
+    const { data: groups } = await svc
+      .from('debt_groups')
+      .select('id, group_vs, per_person')
+      .in('id', groupIds)
+      .eq('mode', 'ONE_QR');
+    const { data: profile } = await svc.from('profile').select('language').eq('id', debts[0].owner_id).maybeSingle();
+    const prefix = NOTE_PREFIX[(profile?.language as 'en' | 'cs') ?? 'en'] ?? NOTE_PREFIX.en;
+    for (const g of groups ?? []) {
+      const tapped = debts
+        .filter((d: { id: string; group_id: string; status: string }) => d.group_id === g.id && d.status === 'CLAIMED_PAID' && ![...debtByMovement.values()].includes(d.id))
+        .sort((a: { claimed_paid_at: string | null }, b: { claimed_paid_at: string | null }) =>
+          (a.claimed_paid_at ?? '').localeCompare(b.claimed_paid_at ?? ''));
+      for (const t of incoming) {
+        if (!tapped.length) break;
+        if (!t.vs || debtByMovement.has(t.id) || normVs(t.vs) !== g.group_vs || t.amount < Number(g.per_person) - 0.001) continue;
+        const d = tapped.shift();
+        const { data: ok, error } = await svc.rpc('fio_settle_debt', {
+          p_debt_id: d.id,
+          p_movement_id: t.id,
+          p_note: `${prefix}: ${d.owed_by_name} (Fio)`,
+        });
+        if (!error && ok) {
+          settled++;
+          debtByMovement.set(t.id, d.id);
+        }
       }
     }
   }
@@ -341,6 +377,14 @@ Deno.serve(async (req) => {
     if (!debt || !OPEN.includes(debt.status)) return json({ ok: true, settled: 0 });
     const r = await checkAccount(svc, debt.target_account_id);
     return json({ ok: r.status !== 'error', settled: r.settled }); // no error detail for anonymous callers
+  }
+
+  // 1b) public group page (app/g/[token].tsx): same idea, for the group's account
+  if (typeof body.group_token === 'string') {
+    const { data: g } = await svc.from('debt_groups').select('id, target_account_id').eq('share_token', body.group_token).maybeSingle();
+    if (!g) return json({ ok: true, settled: 0 });
+    const r = await checkAccount(svc, g.target_account_id);
+    return json({ ok: r.status !== 'error', settled: r.settled });
   }
 
   // 3) scheduler — shared secret, all users

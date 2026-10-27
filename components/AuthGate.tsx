@@ -18,7 +18,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const { session, loading } = useAuth();
   const pathname = usePathname();
 
-  const isPublicRoute = pathname === '/' || pathname.startsWith('/d/');
+  const isPublicRoute = pathname === '/' || pathname.startsWith('/d/') || pathname.startsWith('/g/');
   if (isPublicRoute) return <>{children}</>;
 
   // Don't redirect while we still don't know if a stored session exists —

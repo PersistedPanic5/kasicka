@@ -328,6 +328,8 @@ export interface Debt {
   /** Unique variable symbol put in the QR / shown for manual payment, used
    * to match Fio payments. See 0016_fio_payments.sql. */
   payment_vs: string;
+  /** Set when the debt belongs to a one-link group bill (0019_group_bills.sql). */
+  group_id: string | null;
   /** 'FIO' when the debt was settled automatically from the bank feed. */
   settled_via: 'FIO' | null;
   fio_movement_id: string | null;
@@ -350,6 +352,34 @@ export interface EventRow {
 }
 export type EventInsert = Partial<EventRow> & Pick<EventRow, 'owner_id' | 'name'>;
 export type EventUpdate = Partial<EventRow>;
+
+/** One bill shared through a single link (0019_group_bills.sql). */
+export interface DebtGroup {
+  id: string;
+  owner_id: string;
+  target_account_id: string;
+  mode: 'ONE_QR' | 'PER_PERSON';
+  message: string | null;
+  per_person: number | null;
+  group_vs: string;
+  share_token: string;
+  created_at: string;
+}
+export type DebtGroupInsert = Partial<DebtGroup> & Pick<DebtGroup, 'owner_id' | 'target_account_id' | 'mode'>;
+export type DebtGroupUpdate = Partial<DebtGroup>;
+
+/** What get_group_by_share_token returns (null for an unknown token). */
+export interface GroupShareView {
+  mode: 'ONE_QR' | 'PER_PERSON';
+  description: string;
+  per_person: number | null;
+  target_account_prefix: string | null;
+  target_account_number: string | null;
+  target_bank_code: string | null;
+  fio_enabled: boolean;
+  variable_symbol: string | null;
+  members: { name: string; amount: number; token: string; status: DebtStatus; automatic: boolean }[];
+}
 
 export type BankKind = 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'CASH';
 export type BankStatus = 'NEW' | 'POSTED' | 'LINKED' | 'TRANSFER' | 'IGNORED' | 'DEBT';
@@ -465,6 +495,7 @@ export interface Database {
       recurring_items: { Row: RecurringItem; Insert: RecurringItemInsert; Update: RecurringItemUpdate };
       long_term_items: { Row: LongTermItem; Insert: LongTermItemInsert; Update: LongTermItemUpdate };
       debts: { Row: Debt; Insert: DebtInsert; Update: DebtUpdate };
+      debt_groups: { Row: DebtGroup; Insert: DebtGroupInsert; Update: DebtGroupUpdate };
       events: { Row: EventRow; Insert: EventInsert; Update: EventUpdate };
       bank_transactions: { Row: BankTransaction; Insert: never; Update: never };
       bank_rules: { Row: BankRule; Insert: BankRuleInsert; Update: BankRuleUpdate };
@@ -485,6 +516,10 @@ export interface Database {
       get_debt_by_share_token: {
         Args: { p_token: string };
         Returns: DebtShareView[];
+      };
+      get_group_by_share_token: {
+        Args: { p_token: string };
+        Returns: GroupShareView | null;
       };
       claim_debt_paid: {
         Args: { p_token: string };

@@ -1,6 +1,9 @@
 {
   "cleanUrls": true,
+  "buildCommand": "npx expo export --platform web && cp \"dist/d/[token].html\" dist/d/index.html && cp \"dist/g/[token].html\" dist/g/index.html",
+  "outputDirectory": "dist",
   "rewrites": [
-    { "source": "/d/:token", "destination": "/d/index" }
+    { "source": "/d/:token", "destination": "/d/index" },
+    { "source": "/g/:token", "destination": "/g/index" }
   ]
 }
