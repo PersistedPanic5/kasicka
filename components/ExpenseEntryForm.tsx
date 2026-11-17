@@ -24,6 +24,8 @@ import {
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import { ShareModePicker } from '@/components/ShareModePicker';
 import { createGroupDebts, groupLink, groupProblem, type ShareMode } from '@/lib/debt-groups';
+import { FILE_ACCEPT, isPdf, uploadReceipt, type StagedFile } from '@/lib/debt-bill';
+import { DetailsFields, MergeChoice, type MergeKind } from '@/components/DebtExtras';
 
 /** One split person's name matching an existing outstanding debt, offered
  * for merging at Save time — see the mergeOffer state below and
@@ -170,6 +172,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   const [splitEnabled, setSplitEnabled] = useState(false);
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
+  const [splitDetails, setSplitDetails] = useState('');
+  const [splitFiles, setSplitFiles] = useState<StagedFile[]>([]);
   const [shareMode, setShareMode] = useState<ShareMode>('INDIVIDUAL');
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
   const debtHistory = useDebtHistory();
@@ -177,7 +181,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
   // when confirming" — set only while the confirmation modal below is
   // open; `chosen` is the set of (trimmed, lowercased) names currently
   // opted into merging, defaulting to "merge all" when the offer appears.
-  const [mergeOffer, setMergeOffer] = useState<{ matches: MergeOfferMatch[]; chosen: Set<string> } | null>(null);
+  const [mergeOffer, setMergeOffer] = useState<{ matches: MergeOfferMatch[]; chosen: Set<string>; bills: Set<string> } | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -329,18 +333,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     if (!file || !user) return;
     setPhotoError(null);
     setPhotoUploading(true);
-    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'jpg';
-    const path = `${user.id}/${Date.now()}.${ext}`;
-    const { error } = await supabase.storage.from('receipts').upload(path, file, {
-      contentType: file.type || 'image/jpeg',
-    });
-    if (error) {
-      setPhotoError(error.message);
-      setPhotoUploading(false);
-      return;
+    try {
+      const up = await uploadReceipt(user.id, file);
+      setPhotoPath(up.path);
+      setPhotoPreviewUrl(isPdf(file.type) || isPdf(file.name) ? 'pdf' : URL.createObjectURL(file));
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : String(err));
     }
-    setPhotoPath(path);
-    setPhotoPreviewUrl(URL.createObjectURL(file));
     setPhotoUploading(false);
   }
 
@@ -369,6 +368,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
     setSplitEnabled(false);
     setSplitTotalAmount('');
     setSplitMessage('');
+    setSplitDetails('');
+    setSplitFiles([]);
     setShareMode('INDIVIDUAL');
     setSplitPeople([emptySplitPerson()]);
   }
@@ -377,20 +378,23 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
    * "Merge" while it's already selected should stay selected, not flip
    * back to "Keep separate". Each button always sets its own outcome
    * explicitly instead of both buttons toggling the same boolean. */
-  function setMergeChoice(key: string, shouldMerge: boolean) {
+  function setMergeChoice(key: string, kind: MergeKind) {
     setMergeOffer((prev) => {
       if (!prev) return prev;
-      const next = new Set(prev.chosen);
-      if (shouldMerge) next.add(key);
-      else next.delete(key);
-      return { ...prev, chosen: next };
+      const chosen = new Set(prev.chosen);
+      const bills = new Set(prev.bills);
+      chosen.delete(key);
+      bills.delete(key);
+      if (kind === 'merge') chosen.add(key);
+      if (kind === 'bill') bills.add(key);
+      return { ...prev, chosen, bills };
     });
   }
 
   /** `offer` is only ever passed back in from the merge-offer modal's
    * "Continue" button below — a plain Save press always calls this with
    * no argument, so a fresh match-check runs every time. */
-  async function handleSave(offer?: { matches: MergeOfferMatch[]; chosen: Set<string> }) {
+  async function handleSave(offer?: { matches: MergeOfferMatch[]; chosen: Set<string>; bills: Set<string> }) {
     const numericAmount = Number(amount);
     if (!numericAmount || numericAmount <= 0) return;
 
@@ -450,7 +454,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         })
         .filter((m): m is MergeOfferMatch => m !== null);
       if (matches.length > 0) {
-        setMergeOffer({ matches, chosen: new Set(matches.map((m) => m.name.trim().toLowerCase())) });
+        // default: merge into one amount — or add to the bill when their open debt already is one
+        const keyOf = (m: MergeOfferMatch) => m.name.trim().toLowerCase();
+        setMergeOffer({
+          matches,
+          chosen: new Set(matches.filter((m) => !m.existing.breakdown).map(keyOf)),
+          bills: new Set(matches.filter((m) => m.existing.breakdown).map(keyOf)),
+        });
         return;
       }
     }
@@ -502,6 +512,8 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         message: splitMessage.trim() || null,
         mode: shareMode as 'ONE_QR' | 'PER_PERSON',
         people: validPeople,
+        details: splitDetails,
+        files: splitFiles,
       });
       if (g.error) setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${g.error}`);
       if (g.groupToken) setShareLinks([{ name: t('home.groupLinkName'), link: groupLink(g.groupToken) }]);
@@ -520,6 +532,9 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
         people: validPeople,
         outstandingByName: debtHistory.outstandingByName,
         mergeNames: offer?.chosen ?? new Set(),
+        billNames: offer?.bills,
+        details: splitDetails,
+        files: splitFiles,
         currencyLabel: t('common.czk'),
       });
       if (splitError) setErrorMsg(`${t('common.shareLinkFailedPrefix')} ${splitError}`);
@@ -832,7 +847,13 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             <>
               {photoPreviewUrl ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                  <Image source={{ uri: photoPreviewUrl }} style={styles.photoPreview} />
+                  {photoPreviewUrl === 'pdf' ? (
+                    <View style={[styles.photoPreview, { backgroundColor: tokens.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
+                      <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 12 }}>PDF</Text>
+                    </View>
+                  ) : (
+                    <Image source={{ uri: photoPreviewUrl }} style={styles.photoPreview} />
+                  )}
                   <Pressable onPress={clearPhoto}>
                     <Text style={{ color: tokens.coral, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
                       {t('common.delete')}
@@ -858,8 +879,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
               {createElement('input', {
                 ref: fileInputRef,
                 type: 'file',
-                accept: 'image/*',
-                capture: 'environment',
+                accept: FILE_ACCEPT,
                 style: { display: 'none' },
                 onChange: handlePhotoChange,
               })}
@@ -899,6 +919,7 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
             placeholderTextColor={tokens.textMuted}
             style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
           />
+          <DetailsFields details={splitDetails} onDetails={setSplitDetails} files={splitFiles} onFiles={setSplitFiles} />
 
           <View style={styles.splitEvenlyRow}>
             <Pressable
@@ -1072,36 +1093,11 @@ export function ExpenseEntryForm({ variant = 'mobile' }: { variant?: 'mobile' | 
                     <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
                       {m.existing.amount} + {m.newAmount} = {m.existing.amount + m.newAmount} {t('common.czk')}
                     </Text>
-                    <View style={styles.mergeChoiceRow}>
-                      <Pressable
-                        onPress={() => setMergeChoice(key, true)}
-                        style={[styles.mergeChoiceBtn, { backgroundColor: merging ? tokens.accent : tokens.cardAlt }]}
-                      >
-                        <Text
-                          style={{
-                            color: merging ? tokens.accentText : tokens.text,
-                            fontFamily: fontFamily.semibold,
-                            fontSize: 12.5,
-                          }}
-                        >
-                          {t('debts.mergeOfferMerge')}
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        onPress={() => setMergeChoice(key, false)}
-                        style={[styles.mergeChoiceBtn, { backgroundColor: !merging ? tokens.accent : tokens.cardAlt }]}
-                      >
-                        <Text
-                          style={{
-                            color: !merging ? tokens.accentText : tokens.text,
-                            fontFamily: fontFamily.semibold,
-                            fontSize: 12.5,
-                          }}
-                        >
-                          {t('debts.mergeOfferKeepSeparate')}
-                        </Text>
-                      </Pressable>
-                    </View>
+                    <MergeChoice
+                      compact
+                      value={mergeOffer.bills.has(key) ? 'bill' : merging ? 'merge' : 'separate'}
+                      onChange={(k) => setMergeChoice(key, k)}
+                    />
                   </View>
                 );
               })}

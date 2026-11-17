@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocalSearchParams } from 'expo-router';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -10,6 +10,7 @@ import { LogoMark } from '@/components/Logo';
 import { supabase } from '@/lib/supabase';
 import { buildSpdPayload, czechIBAN } from '@/lib/czech-qr-payment';
 import { translations, detectBrowserLanguage, type Language } from '@/lib/i18n';
+import type { BillFile, BillItem, BillOffset, DebtBillView } from '@/types/database';
 
 /**
  * The public, no-login debt share page — matches DebtorShare.dc.html.
@@ -62,27 +63,7 @@ import { translations, detectBrowserLanguage, type Language } from '@/lib/i18n';
  * switches once doesn't have to again on the next link they open.
  */
 const LANGUAGE_STORAGE_KEY = 'kasicka-debtshare-language';
-type DebtShareView = {
-  description: string | null;
-  amount: number | null;
-  status: 'OUTSTANDING' | 'CLAIMED_PAID' | 'SETTLED' | 'MERGED';
-  target_account_prefix: string | null;
-  target_account_number: string | null;
-  target_bank_code: string | null;
-  /** Set only when status is MERGED — the current token to send the
-   * visitor to (already resolved through however many merge hops server-
-   * side), or null if that chain dead-ends because the replacement was
-   * itself since deleted. See supabase/migrations/
-   * 0011_debts_merge_supersede.sql. */
-  merged_into_token: string | null;
-  /** Fio-linked target account only (null otherwise): the unique variable
-   * symbol the payment must carry so the server can match it to this debt.
-   * See supabase/migrations/0016_fio_payments.sql. */
-  variable_symbol: string | null;
-  fio_enabled: boolean;
-  /** SETTLED by the bank-feed matcher rather than by Pavel clicking Confirm. */
-  settled_automatically: boolean;
-};
+type DebtShareView = DebtBillView;
 
 // How often a Fio-linked debtor page asks the server to look at the bank
 // feed. The server enforces Fio's own >=30 s/token limit no matter how many
@@ -102,6 +83,11 @@ export default function DebtorSharePage() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const { tokens } = useTheme();
   const [debt, setDebt] = useState<DebtShareView | null>(null);
+  // `token` is whatever link was opened; `liveToken` is the debt that link currently stands for
+  // (the same person's newest open debt once the old one was settled — see get_debt_bill).
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [fileUrls, setFileUrls] = useState<Record<string, string>>({});
+  const [fileError, setFileError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [acctCopied, setAcctCopied] = useState(false);
@@ -139,11 +125,11 @@ export default function DebtorSharePage() {
   const load = useCallback(
     async (silent = false) => {
       if (!silent) setLoading(true);
-      const { data, error } = await supabase.rpc('get_debt_by_share_token', { p_token: token });
-      if (error || !data || (Array.isArray(data) && data.length === 0)) {
+      const { data, error } = await supabase.rpc('get_debt_bill', { p_token: token });
+      if (error || !data) {
         if (!silent) setNotFound(true);
       } else {
-        setDebt((Array.isArray(data) ? data[0] : data) as DebtShareView);
+        setDebt(data as DebtShareView);
       }
       if (!silent) setLoading(false);
     },
@@ -157,25 +143,63 @@ export default function DebtorSharePage() {
   // Live payment confirmation: while a Fio-linked debt is still open, ask the
   // check-fio-payments function (server-side throttled + does the matching /
   // settling) and then re-read the debt. Stops as soon as it's SETTLED.
+  const liveToken = debt?.token ?? token;
   const watching = !!debt && debt.fio_enabled && (debt.status === 'OUTSTANDING' || debt.status === 'CLAIMED_PAID');
   useEffect(() => {
     if (!watching) return;
     const id = setInterval(async () => {
-      await supabase.functions.invoke('check-fio-payments', { body: { share_token: token } }).catch(() => null);
+      await supabase.functions.invoke('check-fio-payments', { body: { share_token: liveToken } }).catch(() => null);
       load(true);
     }, FIO_POLL_MS);
     return () => clearInterval(id);
-  }, [watching, token, load]);
+  }, [watching, liveToken, load]);
 
   async function markPaid() {
-    await supabase.rpc('claim_debt_paid', { p_token: token });
+    await supabase.rpc('claim_debt_paid', { p_token: liveToken });
     load();
   }
 
   async function undo() {
-    await supabase.rpc('undo_claim_debt_paid', { p_token: token });
+    await supabase.rpc('undo_claim_debt_paid', { p_token: liveToken });
     load();
   }
+
+  // Attachments: the private bucket is opened through the debt-file function (short-lived signed link).
+  async function signedUrl(f: BillFile): Promise<string | null> {
+    const { data, error } = await supabase.functions.invoke('debt-file', { body: { token: liveToken, file_id: f.id } });
+    return error || !data?.url ? null : (data.url as string);
+  }
+  async function openFile(f: BillFile) {
+    setFileError(false);
+    const w = Platform.OS === 'web' ? window.open('', '_blank') : null; // opened inside the click, before the await
+    const url = await signedUrl(f);
+    if (!url) {
+      w?.close();
+      return setFileError(true);
+    }
+    if (w) w.location.href = url;
+    else if (Platform.OS === 'web') window.location.href = url;
+  }
+  const allFiles: BillFile[] = [];
+  if (debt && debt.status !== 'MERGED') {
+    const seen = new Set<string>();
+    const add = (list: BillFile[]) => list.forEach((f) => !seen.has(f.id) && (seen.add(f.id), allFiles.push(f)));
+    add(debt.files);
+    debt.offsets.forEach((o) => add(o.files));
+    debt.items.forEach((i) => {
+      add(i.files);
+      i.offsets.forEach((o) => add(o.files));
+    });
+  }
+  useEffect(() => {
+    if (!filesOpen) return;
+    allFiles.filter((f) => !fileUrls[f.id]).forEach(async (f) => {
+      const url = await signedUrl(f);
+      if (url) setFileUrls((prev) => ({ ...prev, [f.id]: url }));
+      else setFileError(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filesOpen, debt]);
 
   function handleSaveOrShareQR() {
     if (Platform.OS !== 'web' || !qrRef.current?.toDataURL) return;
@@ -351,6 +375,11 @@ export default function DebtorSharePage() {
           <Text style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 15, marginBottom: 8, textAlign: 'center' }}>
             {debt.description}
           </Text>
+          {debt.continued && (
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, textAlign: 'center', marginBottom: 8 }}>
+              {t('debtShare.continuedNote')}
+            </Text>
+          )}
           <Text style={{ color: tokens.text, fontFamily: fontFamily.regular, fontSize: 34, lineHeight: 38 }}>
             {debt.amount}
             <Text style={{ color: tokens.textMuted, fontSize: 15, fontFamily: fontFamily.medium }}> {t('common.czk')}</Text>
@@ -496,6 +525,71 @@ export default function DebtorSharePage() {
               )}
             </View>
           )}
+
+          {/* What the amount is made of: details, reciprocated expenses, itemised bill lines. */}
+          {(debt.details || debt.offsets.length > 0 || debt.items.length > 0 || debt.files.length > 0) && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: tokens.text }]}>{t('debtShare.expenses')}</Text>
+              {debt.items.map((it, i) => (
+                <ExpenseBlock key={i} title={it.title} amount={it.amount} base={it.base_amount} date={it.date} details={it.details} offsets={it.offsets} files={it.files} onOpen={openFile} t={t} tokens={tokens} />
+              ))}
+              {debt.items.length === 0 && (
+                <ExpenseBlock title={debt.description} amount={debt.amount} base={debt.base_amount} date={debt.date} details={debt.details} offsets={debt.offsets} files={debt.files} onOpen={openFile} t={t} tokens={tokens} plain />
+              )}
+              {debt.items.length > 0 && (debt.details || debt.offsets.length > 0 || debt.files.length > 0) && (
+                <ExpenseBlock title={t('debtShare.total')} amount={debt.amount} base={debt.base_amount} date={debt.date} details={debt.details} offsets={debt.offsets} files={debt.files} onOpen={openFile} t={t} tokens={tokens} plain />
+              )}
+              {fileError && <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 6 }}>{t('debtShare.fileError')}</Text>}
+            </View>
+          )}
+
+          {/* All files in one collapsible place, with previews. */}
+          {allFiles.length > 0 && (
+            <View style={styles.section}>
+              <Pressable onPress={() => setFilesOpen((v) => !v)} accessibilityRole="button" accessibilityState={{ expanded: filesOpen }} style={styles.collapseHead}>
+                <Text style={[styles.sectionTitle, { color: tokens.text, marginBottom: 0 }]}>
+                  {t('debtShare.attachments')} ({allFiles.length})
+                </Text>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.bold, fontSize: 14 }}>{filesOpen ? '−' : '+'}</Text>
+              </Pressable>
+              {filesOpen &&
+                allFiles.map((f) => (
+                  <View key={f.id} style={[styles.fileCard, { borderColor: tokens.border, backgroundColor: tokens.cardAlt }]}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <Text numberOfLines={1} style={{ flex: 1, color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>{f.name}</Text>
+                      <Pressable onPress={() => openFile(f)} hitSlop={8}>
+                        <Text style={{ color: tokens.accent, fontFamily: fontFamily.bold, fontSize: 12.5 }}>{t('debtShare.viewFile')}</Text>
+                      </Pressable>
+                    </View>
+                    {Platform.OS === 'web' && fileUrls[f.id] && (/pdf/i.test(f.mime ?? f.name)
+                      ? createElement('iframe', { src: fileUrls[f.id], title: f.name, style: { width: '100%', height: 360, border: 0, borderRadius: 8, marginTop: 8, background: '#fff' } })
+                      : createElement('img', { src: fileUrls[f.id], alt: f.name, style: { width: '100%', height: 'auto', borderRadius: 8, marginTop: 8 } }))}
+                  </View>
+                ))}
+            </View>
+          )}
+
+          {/* Earlier debts of this person, already settled — overview only. */}
+          {debt.past.length > 0 && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: tokens.text }]}>{t('debtShare.pastTitle')}</Text>
+              {debt.past.map((p, i) => (
+                <View key={i} style={[styles.pastRow, { borderColor: tokens.border }]}>
+                  <View style={{ flex: 1 }}>
+                    <Text numberOfLines={1} style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>{p.title}</Text>
+                    {p.paid_on && (
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+                        {t('debtShare.paidOn').replace('{date}', p.paid_on)}
+                      </Text>
+                    )}
+                  </View>
+                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13, fontVariant: ['tabular-nums'] }}>
+                    {p.amount} {t('common.czk')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
         </ScrollView>
       )}
       </View>
@@ -503,7 +597,73 @@ export default function DebtorSharePage() {
   );
 }
 
+type Tk = ReturnType<typeof useTheme>['tokens'];
+
+/** One expense: title + amount (original → payable when reciprocated expenses exist), details, reciprocated lines, file chips. */
+function ExpenseBlock(p: {
+  title: string;
+  amount: number;
+  base: number | null;
+  date: string;
+  details: string | null;
+  offsets: BillOffset[];
+  files: BillFile[];
+  onOpen: (f: BillFile) => void;
+  t: (k: string) => string;
+  tokens: Tk;
+  plain?: boolean;
+}) {
+  const { tokens, t } = p;
+  const chip = (f: BillFile) => (
+    <Pressable key={f.id} onPress={() => p.onOpen(f)} style={[styles.fileChip, { backgroundColor: tokens.cardAlt, borderColor: tokens.border }]}>
+      <Text numberOfLines={1} style={{ color: tokens.accent, fontFamily: fontFamily.semibold, fontSize: 12 }}>{f.name}</Text>
+    </Pressable>
+  );
+  return (
+    <View style={[styles.expense, { borderColor: tokens.border }]}>
+      {!p.plain && (
+        <View style={{ flexDirection: 'row', gap: 10, alignItems: 'baseline' }}>
+          <Text style={{ flex: 1, color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13.5 }}>{p.title}</Text>
+          <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13.5, fontVariant: ['tabular-nums'] }}>
+            {p.base != null ? `${p.base} → ${p.amount}` : p.amount} {t('common.czk')}
+          </Text>
+        </View>
+      )}
+      {!p.plain && <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginTop: 1 }}>{p.date}</Text>}
+      {p.plain && p.base != null && (
+        <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
+          {t('debtShare.total')}: {p.base} {t('common.czk')}
+        </Text>
+      )}
+      {!!p.details && <Text selectable style={{ color: tokens.text, fontFamily: fontFamily.medium, fontSize: 13, lineHeight: 19, marginTop: 6 }}>{p.details}</Text>}
+      {p.offsets.map((o, i) => (
+        <View key={i} style={{ marginTop: 6 }}>
+          <Text style={{ color: tokens.greenFg, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>
+            − {o.amount} {t('common.czk')} · {t('debtShare.youPaid')}
+            {o.note ? `: ${o.note}` : ''}
+          </Text>
+          {o.files.length > 0 && <View style={styles.chipRow}>{o.files.map(chip)}</View>}
+        </View>
+      ))}
+      {p.plain && p.base != null && (
+        <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13, marginTop: 6 }}>
+          {t('debtShare.toPay')}: {p.amount} {t('common.czk')}
+        </Text>
+      )}
+      {p.files.length > 0 && <View style={styles.chipRow}>{p.files.map(chip)}</View>}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  section: { width: '100%', marginTop: 24 },
+  sectionTitle: { fontFamily: fontFamily.extrabold, fontSize: 15, marginBottom: 8 },
+  expense: { borderTopWidth: 1, paddingVertical: 10 },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
+  fileChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, minHeight: 34, justifyContent: 'center', maxWidth: '100%' },
+  collapseHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 },
+  fileCard: { borderWidth: 1, borderRadius: 12, padding: 10, marginTop: 8 },
+  pastRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, paddingVertical: 9 },
   screen: { flex: 1, paddingHorizontal: 22, paddingTop: 14, paddingBottom: 14, alignItems: 'center' },
   pageInner: { flex: 1, width: '100%', maxWidth: 440 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },

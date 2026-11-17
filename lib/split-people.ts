@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { insertDebtFiles, type StagedFile } from '@/lib/debt-bill';
 import { buildMergedFromSnapshot, mergeDebtMessages } from '@/lib/debt-merge';
 import type { MergedDebtSnapshot } from '@/types/database';
 
@@ -85,6 +86,9 @@ export interface OutstandingDebtMatch {
   transaction_id: string | null;
   target_account_id: string;
   merged_from: MergedDebtSnapshot[] | null;
+  /** True when this open debt is already a "bill with details" (0020). */
+  breakdown: boolean;
+  details: string | null;
 }
 
 export interface DebtHistory {
@@ -117,7 +121,7 @@ export function useDebtHistory(): DebtHistory {
     let cancelled = false;
     supabase
       .from('debts')
-      .select('id, owed_by_name, amount, message, status, transaction_id, target_account_id, merged_from, created_at')
+      .select('id, owed_by_name, amount, message, status, transaction_id, target_account_id, merged_from, created_at, breakdown, details')
       .order('created_at', { ascending: false })
       .limit(500)
       .then(({ data }) => {
@@ -142,6 +146,8 @@ export function useDebtHistory(): DebtHistory {
               transaction_id: row.transaction_id,
               target_account_id: row.target_account_id,
               merged_from: row.merged_from ?? null,
+              breakdown: !!row.breakdown,
+              details: row.details ?? null,
             });
           }
         }
@@ -174,6 +180,13 @@ export interface CreateOrMergeDebtsParams {
    * only ever happens when explicitly chosen. An empty set reproduces the
    * old "always create a new debt" behavior. */
   mergeNames: Set<string>;
+  /** Lowercased names that get a "bill with details" instead: the new debt is
+   * kept as its own itemised line inside that person's bill (created, or
+   * extended when their open debt already is one) — one QR, full details. */
+  billNames?: Set<string>;
+  /** Optional free-text details + attachments, put on every debt of this split. */
+  details?: string | null;
+  files?: StagedFile[];
   /** Localized currency label ("CZK"/"Kč") for the merged message's
    * amount tags — see lib/debt-merge.ts's mergeDebtMessages. */
   currencyLabel: string;
@@ -201,10 +214,13 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
     const key = person.name.trim().toLowerCase();
     const candidate = params.mergeNames.has(key) ? params.outstandingByName.get(key) : undefined;
     const existing = candidate && !consumedExistingIds.has(candidate.id) ? candidate : undefined;
+    const billCandidate = params.billNames?.has(key) ? params.outstandingByName.get(key) : undefined;
+    const billTarget = billCandidate && !consumedExistingIds.has(billCandidate.id) ? billCandidate : undefined;
 
     if (existing) {
       consumedExistingIds.add(existing.id);
       const mergedAmount = existing.amount + person.amount;
+      const details = [existing.details, params.details].filter(Boolean).join('\n\n') || null;
       const mergedMessage = mergeDebtMessages(
         [
           { message: existing.message, amount: existing.amount },
@@ -227,6 +243,7 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
           amount: mergedAmount,
           target_account_id: params.targetAccountId,
           message: mergedMessage || null,
+          details,
           merged_from: buildMergedFromSnapshot([
             {
               owed_by_name: existing.owed_by_name,
@@ -245,12 +262,17 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
             },
           ]),
         })
-        .select('share_token')
+        .select('id, share_token')
         .single();
 
       if (error) {
         failures.push(`${person.name}: ${error.message}`);
         continue;
+      }
+      // Attachments of the folded-in debt move to the new one; this split's own go on it too.
+      if (data) {
+        await supabase.from('debt_files').update({ debt_id: data.id }).eq('debt_id', existing.id);
+        await insertDebtFiles(params.ownerId, data.id, params.files ?? []);
       }
       // Mark the old debt MERGED and point it at the replacement instead
       // of deleting it (supabase/migrations/0011_debts_merge_supersede.sql)
@@ -277,14 +299,28 @@ export async function createOrMergeDebtsForSplit(params: CreateOrMergeDebtsParam
         amount: person.amount,
         target_account_id: params.targetAccountId,
         message: params.message,
+        details: params.details?.trim() || null,
       })
-      .select('share_token')
+      .select('id, share_token')
       .single();
 
     if (error) {
       failures.push(`${person.name}: ${error.message}`);
     } else if (data) {
-      links.push({ name: person.name, token: data.share_token });
+      await insertDebtFiles(params.ownerId, data.id, params.files ?? []);
+      let token = data.share_token;
+      if (billTarget) {
+        consumedExistingIds.add(billTarget.id);
+        const { data: billToken, error: billError } = await supabase.rpc('bill_merge', {
+          p_ids: [billTarget.id, data.id],
+          p_name: billTarget.owed_by_name,
+          // extending an existing bill keeps its message; a new one needs one
+          p_message: billTarget.breakdown ? null : billTarget.message ?? params.message,
+        });
+        if (billError || !billToken) failures.push(`${person.name}: ${billError?.message ?? 'bill'}`);
+        else token = billToken;
+      }
+      links.push({ name: person.name, token });
     }
   }
 

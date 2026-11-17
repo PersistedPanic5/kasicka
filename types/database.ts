@@ -333,6 +333,74 @@ export interface Debt {
   /** 'FIO' when the debt was settled automatically from the bank feed. */
   settled_via: 'FIO' | null;
   fio_movement_id: string | null;
+  /** Free-text split details shown on the debt link (0020). */
+  details: string | null;
+  /** Gross amount before reciprocated expenses; null when there are none.
+   * `amount` is always the NET payable (what the QR asks for). */
+  base_amount: number | null;
+  /** True for a "bill with details" — folded debts stay itemised on the link. */
+  breakdown: boolean;
+  /** Hide the expense's own receipt on the debt link. */
+  hide_receipt: boolean;
+}
+/** Something the debtor paid for the owner, deducted from the debt (0020). */
+export interface DebtOffset {
+  id: string;
+  owner_id: string;
+  debt_id: string;
+  amount: number;
+  note: string | null;
+  offset_date: string;
+  created_at: string;
+}
+export type DebtOffsetInsert = Partial<DebtOffset> & Pick<DebtOffset, 'owner_id' | 'debt_id' | 'amount'>;
+export type DebtOffsetUpdate = Partial<DebtOffset>;
+/** Attachment (receipt photo / PDF) on a debt or on one of its offsets (0020). */
+export interface DebtFile {
+  id: string;
+  owner_id: string;
+  debt_id: string;
+  offset_id: string | null;
+  path: string;
+  name: string;
+  mime: string | null;
+  created_at: string;
+}
+export type DebtFileInsert = Partial<DebtFile> & Pick<DebtFile, 'owner_id' | 'debt_id' | 'path' | 'name'>;
+export type DebtFileUpdate = Partial<DebtFile>;
+/** What the public RPC get_debt_bill returns (null for an unknown token). */
+export interface BillFile { id: string; name: string; mime: string | null }
+export interface BillOffset { amount: number; note: string | null; date: string; files: BillFile[] }
+export interface BillItem {
+  title: string;
+  amount: number;
+  base_amount: number | null;
+  details: string | null;
+  date: string;
+  offsets: BillOffset[];
+  files: BillFile[];
+}
+export interface DebtBillView {
+  status: DebtStatus;
+  token: string;
+  merged_into_token?: string | null;
+  continued: boolean;
+  amount: number;
+  base_amount: number | null;
+  breakdown: boolean;
+  description: string;
+  details: string | null;
+  date: string;
+  target_account_prefix: string | null;
+  target_account_number: string | null;
+  target_bank_code: string | null;
+  fio_enabled: boolean;
+  variable_symbol: string | null;
+  settled_automatically: boolean;
+  offsets: BillOffset[];
+  files: BillFile[];
+  items: BillItem[];
+  past: { amount: number; paid_on: string | null; title: string }[];
 }
 export type DebtInsert = Partial<Debt> &
   Pick<Debt, 'owner_id' | 'owed_by_name' | 'amount' | 'target_account_id'>;
@@ -495,6 +563,8 @@ export interface Database {
       recurring_items: { Row: RecurringItem; Insert: RecurringItemInsert; Update: RecurringItemUpdate };
       long_term_items: { Row: LongTermItem; Insert: LongTermItemInsert; Update: LongTermItemUpdate };
       debts: { Row: Debt; Insert: DebtInsert; Update: DebtUpdate };
+      debt_offsets: { Row: DebtOffset; Insert: DebtOffsetInsert; Update: DebtOffsetUpdate };
+      debt_files: { Row: DebtFile; Insert: DebtFileInsert; Update: DebtFileUpdate };
       debt_groups: { Row: DebtGroup; Insert: DebtGroupInsert; Update: DebtGroupUpdate };
       events: { Row: EventRow; Insert: EventInsert; Update: EventUpdate };
       bank_transactions: { Row: BankTransaction; Insert: never; Update: never };
@@ -516,6 +586,14 @@ export interface Database {
       get_debt_by_share_token: {
         Args: { p_token: string };
         Returns: DebtShareView[];
+      };
+      get_debt_bill: {
+        Args: { p_token: string };
+        Returns: DebtBillView | null;
+      };
+      bill_merge: {
+        Args: { p_ids: string[]; p_name: string; p_message: string | null };
+        Returns: string;
       };
       get_group_by_share_token: {
         Args: { p_token: string };

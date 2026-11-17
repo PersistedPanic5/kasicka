@@ -18,6 +18,8 @@ import {
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import { categoryColor } from '@/lib/identity';
 import { budgetMonthForDate } from '@/lib/budget-month';
+import { FILE_ACCEPT, isPdf, uploadReceipt, type StagedFile } from '@/lib/debt-bill';
+import { DetailsFields, MergeChoice, type MergeKind } from '@/components/DebtExtras';
 import type { DebtStatus, EventRow } from '@/types/database';
 
 export type TransactionRow = {
@@ -125,18 +127,13 @@ export function TransactionEditor({
     if (!file || !user) return;
     setPhotoError(null);
     setPhotoBusy(true);
-    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'jpg';
-    const path = `${user.id}/${Date.now()}.${ext}`;
-    const { error: err } = await supabase.storage.from('receipts').upload(path, file, {
-      contentType: file.type || 'image/jpeg',
-    });
-    if (err) {
-      setPhotoError(err.message);
-      setPhotoBusy(false);
-      return;
+    try {
+      const up = await uploadReceipt(user.id, file);
+      setPhotoPath(up.path);
+      setPhotoUrl(URL.createObjectURL(file));
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : String(err));
     }
-    setPhotoPath(path);
-    setPhotoUrl(URL.createObjectURL(file));
     setPhotoBusy(false);
   }
 
@@ -174,9 +171,11 @@ export function TransactionEditor({
   const [splitEnabled, setSplitEnabled] = useState(expandSplit);
   const [splitTotalAmount, setSplitTotalAmount] = useState('');
   const [splitMessage, setSplitMessage] = useState('');
+  const [splitDetails, setSplitDetails] = useState('');
+  const [splitFiles, setSplitFiles] = useState<StagedFile[]>([]);
   const [splitPeople, setSplitPeople] = useState<SplitPerson[]>([emptySplitPerson()]);
   const debtHistory = useDebtHistory();
-  const [mergeOffer, setMergeOffer] = useState<{ matches: MergeOfferMatch[]; chosen: Set<string> } | null>(null);
+  const [mergeOffer, setMergeOffer] = useState<{ matches: MergeOfferMatch[]; chosen: Set<string>; bills: Set<string> } | null>(null);
   const [splitSaving, setSplitSaving] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [splitShareLinks, setSplitShareLinks] = useState<{ name: string; link: string }[]>([]);
@@ -193,17 +192,20 @@ export function TransactionEditor({
   function updateSplitPerson(id: string, field: 'name' | 'amount', value: string) {
     setSplitPeople((prev) => prev.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
   }
-  function setMergeChoice(key: string, shouldMerge: boolean) {
+  function setMergeChoice(key: string, kind: MergeKind) {
     setMergeOffer((prev) => {
       if (!prev) return prev;
-      const next = new Set(prev.chosen);
-      if (shouldMerge) next.add(key);
-      else next.delete(key);
-      return { ...prev, chosen: next };
+      const chosen = new Set(prev.chosen);
+      const bills = new Set(prev.bills);
+      chosen.delete(key);
+      bills.delete(key);
+      if (kind === 'merge') chosen.add(key);
+      if (kind === 'bill') bills.add(key);
+      return { ...prev, chosen, bills };
     });
   }
 
-  async function saveSplitDebt(offer?: { matches: MergeOfferMatch[]; chosen: Set<string> }) {
+  async function saveSplitDebt(offer?: { matches: MergeOfferMatch[]; chosen: Set<string>; bills: Set<string> }) {
     if (!user) return;
     const validPeople = validSplitPeople(splitPeople);
     if (validPeople.length === 0) return setSplitError(tr('debts.nameError'));
@@ -219,7 +221,12 @@ export function TransactionEditor({
         })
         .filter((m): m is MergeOfferMatch => m !== null);
       if (matches.length > 0) {
-        setMergeOffer({ matches, chosen: new Set(matches.map((m) => m.name.trim().toLowerCase())) });
+        const keyOf = (m: MergeOfferMatch) => m.name.trim().toLowerCase();
+        setMergeOffer({
+          matches,
+          chosen: new Set(matches.filter((m) => !m.existing.breakdown).map(keyOf)),
+          bills: new Set(matches.filter((m) => m.existing.breakdown).map(keyOf)),
+        });
         return;
       }
     }
@@ -234,6 +241,9 @@ export function TransactionEditor({
       people: validPeople,
       outstandingByName: debtHistory.outstandingByName,
       mergeNames: offer?.chosen ?? new Set(),
+      billNames: offer?.bills,
+      details: splitDetails,
+      files: splitFiles,
       currencyLabel: tr('common.czk'),
     });
     setMergeOffer(null);
@@ -243,6 +253,8 @@ export function TransactionEditor({
       setSplitShareLinks(links.map((l) => ({ name: l.name, link: linkForToken(l.token) })));
       setSplitTotalAmount('');
       setSplitMessage('');
+      setSplitDetails('');
+      setSplitFiles([]);
       setSplitPeople([emptySplitPerson()]);
       onChanged();
     }
@@ -399,7 +411,13 @@ export function TransactionEditor({
                 <>
                   {photoUrl && (
                     <Pressable onPress={() => window.open(photoUrl, '_blank', 'noopener,noreferrer')}>
-                      <Image source={{ uri: photoUrl }} style={styles.photo} resizeMode="cover" />
+                      {isPdf(photoPath) ? (
+                        <View style={[styles.smallBtn, { backgroundColor: tokens.cardAlt, alignSelf: 'flex-start' }]}>
+                          <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 13 }}>PDF</Text>
+                        </View>
+                      ) : (
+                        <Image source={{ uri: photoUrl }} style={styles.photo} resizeMode="cover" />
+                      )}
                       <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11, marginTop: 5 }}>
                         {tr('transactions.viewFullPhoto')}
                       </Text>
@@ -429,8 +447,7 @@ export function TransactionEditor({
                   {createElement('input', {
                     ref: fileInputRef,
                     type: 'file',
-                    accept: 'image/*',
-                    capture: 'environment',
+                    accept: FILE_ACCEPT,
                     style: { display: 'none' },
                     onChange: handlePhotoChange,
                   })}
@@ -488,6 +505,7 @@ export function TransactionEditor({
                         placeholderTextColor={tokens.textMuted}
                         style={[styles.splitInput, { color: tokens.text, borderColor: tokens.border }]}
                       />
+                      <DetailsFields details={splitDetails} onDetails={setSplitDetails} files={splitFiles} onFiles={setSplitFiles} />
 
                       <View style={styles.splitEvenlyRow}>
                         <Pressable
@@ -623,28 +641,11 @@ export function TransactionEditor({
                     <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>
                       {m.existing.amount} + {m.newAmount} = {m.existing.amount + m.newAmount} {tr('common.czk')}
                     </Text>
-                    <View style={styles.mergeChoiceRow}>
-                      {[
-                        { on: true, text: tr('debts.mergeOfferMerge') },
-                        { on: false, text: tr('debts.mergeOfferKeepSeparate') },
-                      ].map((opt) => (
-                        <Pressable
-                          key={String(opt.on)}
-                          onPress={() => setMergeChoice(key, opt.on)}
-                          style={[styles.mergeChoiceBtn, { backgroundColor: merging === opt.on ? tokens.accent : tokens.cardAlt }]}
-                        >
-                          <Text
-                            style={{
-                              color: merging === opt.on ? tokens.accentText : tokens.text,
-                              fontFamily: fontFamily.semibold,
-                              fontSize: 12.5,
-                            }}
-                          >
-                            {opt.text}
-                          </Text>
-                        </Pressable>
-                      ))}
-                    </View>
+                    <MergeChoice
+                      compact
+                      value={mergeOffer.bills.has(key) ? 'bill' : merging ? 'merge' : 'separate'}
+                      onChange={(k) => setMergeChoice(key, k)}
+                    />
                   </View>
                 );
               })}

@@ -11,6 +11,7 @@ import { identityColorFor, withAlpha } from '@/lib/identity';
 import { useAppData } from '@/lib/use-app-data';
 import { groupLink } from '@/lib/debt-groups';
 import { TransactionEditor, type TransactionRow } from '@/components/TransactionEditor';
+import { DebtExtrasEditor, DetailsFields, MergeChoice, type MergeKind } from '@/components/DebtExtras';
 import type { DebtStatus, EventRow, MergedDebtSnapshot } from '@/types/database';
 
 type DebtRow = {
@@ -32,6 +33,11 @@ type DebtRow = {
   settled_via: 'FIO' | null;
   /** One-link group bill this debt belongs to (migration 0019). */
   group_id: string | null;
+  /** Migration 0020: split details, gross amount (when reciprocated expenses exist), bill flag, receipt visibility. */
+  details: string | null;
+  base_amount: number | null;
+  breakdown: boolean;
+  hide_receipt: boolean;
 };
 
 /**
@@ -82,11 +88,13 @@ export default function Debts() {
   const [mergeMessage, setMergeMessage] = useState('');
   const [mergeSaving, setMergeSaving] = useState(false);
   const [mergeModalError, setMergeModalError] = useState<string | null>(null);
+  const [mergeKind, setMergeKind] = useState<MergeKind>('merge');
 
   const [editing, setEditing] = useState<DebtRow | null>(null);
   const [editName, setEditName] = useState('');
   const [editAmount, setEditAmount] = useState('');
   const [editMessage, setEditMessage] = useState('');
+  const [editDetails, setEditDetails] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -99,7 +107,7 @@ export default function Debts() {
     const { data } = await supabase
       .from('debts')
       .select(
-        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from, settled_via, group_id'
+        'id, owed_by_name, amount, status, share_token, transaction_id, target_account_id, message, created_at, merged_from, settled_via, group_id, details, base_amount, breakdown, hide_receipt'
       )
       // A debt folded into another one via merge (supabase/migrations/
       // 0011_debts_merge_supersede.sql) is history, not something to act
@@ -326,6 +334,7 @@ export default function Debts() {
       )
     );
     setMergeModalError(null);
+    setMergeKind(selected.some((d) => d.breakdown) ? 'bill' : 'merge');
     setMergeModalOpen(true);
   }
 
@@ -339,7 +348,7 @@ export default function Debts() {
     if (!user) return;
     const selected = debts.filter((d) => selectedIds.has(d.id));
     const numericAmount = Number(mergeAmount);
-    if (!numericAmount || numericAmount <= 0) {
+    if (mergeKind === 'merge' && (!numericAmount || numericAmount <= 0)) {
       setMergeModalError(t('debts.amountError'));
       return;
     }
@@ -349,6 +358,25 @@ export default function Debts() {
     }
     setMergeSaving(true);
     setMergeModalError(null);
+
+    // "Bill with details": folded debts stay itemised on the link, one QR for the total.
+    if (mergeKind === 'bill') {
+      const { error: billError } = await supabase.rpc('bill_merge', {
+        p_ids: selected.map((d) => d.id),
+        p_name: mergeName.trim(),
+        p_message: mergeMessage.trim() || null,
+      });
+      setMergeSaving(false);
+      if (billError) {
+        setMergeModalError(billError.message);
+        return;
+      }
+      setMergeModalOpen(false);
+      setSelectMode(false);
+      setSelectedIds(new Set());
+      load();
+      return;
+    }
 
     // No transaction_id — a merged debt may combine debts from different
     // original transactions/categories, so it deliberately points at none
@@ -454,8 +482,10 @@ export default function Debts() {
   function openEdit(debt: DebtRow) {
     setEditing(debt);
     setEditName(debt.owed_by_name);
-    setEditAmount(String(debt.amount));
+    // With reciprocated expenses the field edits the ORIGINAL amount; the payable amount is that minus the offsets.
+    setEditAmount(String(debt.base_amount ?? debt.amount));
     setEditMessage(debt.message ?? '');
+    setEditDetails(debt.details ?? '');
     setEditError(null);
   }
 
@@ -476,14 +506,24 @@ export default function Debts() {
       setEditError(t('debts.nameError'));
       return;
     }
+    if (editing.base_amount != null && numericAmount - (Number(editing.base_amount) - Number(editing.amount)) <= 0) {
+      setEditError(t('bill.offsetTooBig'));
+      return;
+    }
     setEditSaving(true);
     setEditError(null);
     const { error } = await supabase
       .from('debts')
       .update({
         owed_by_name: editName.trim(),
-        amount: numericAmount,
+        ...(editing.base_amount != null
+          ? {
+              base_amount: numericAmount,
+              amount: Math.round((numericAmount - (Number(editing.base_amount) - Number(editing.amount))) * 100) / 100,
+            }
+          : { amount: numericAmount }),
         message: editMessage.trim() || null,
+        details: editDetails.trim() || null,
       })
       .eq('id', editing.id);
 
@@ -550,6 +590,7 @@ export default function Debts() {
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: tokens.text, fontFamily: fontFamily.bold, fontSize: 15 }}>
               {debt.owed_by_name}
+              {debt.breakdown ? <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>{`  · ${t('bill.badge')}`}</Text> : null}
               {debt.group_id ? <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>{`  · ${t('debts.groupBadge')}`}</Text> : null}
             </Text>
             <Text
@@ -561,7 +602,7 @@ export default function Debts() {
                 fontVariant: ['tabular-nums'],
               }}
             >
-              {debt.amount} CZK
+              {debt.base_amount != null ? `${debt.base_amount} → ${debt.amount}` : debt.amount} CZK
             </Text>
           </View>
 
@@ -844,6 +885,7 @@ export default function Debts() {
       <Modal visible={editing !== null} transparent animationType="fade" onRequestClose={closeEdit}>
         <View style={styles.modalOverlay}>
           <View style={[styles.modalCard, { backgroundColor: tokens.bg, borderColor: tokens.border }]}>
+            <ScrollView>
             <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 16, marginBottom: 14 }}>
               {t('debts.editTitle')}
             </Text>
@@ -858,7 +900,7 @@ export default function Debts() {
             />
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
-              {t('debts.amountLabel')}
+              {editing?.base_amount != null ? `${t('bill.original')} (${t('common.czk')})` : t('debts.amountLabel')}
             </Text>
             <TextInput
               value={editAmount}
@@ -877,6 +919,27 @@ export default function Debts() {
               placeholderTextColor={tokens.textMuted}
               style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
             />
+
+            <View style={{ marginTop: 12 }}>
+              <DetailsFields details={editDetails} onDetails={setEditDetails} />
+            </View>
+            {editing && (
+              <DebtExtrasEditor
+                key={editing.id}
+                debtId={editing.id}
+                transactionId={editing.transaction_id}
+                hideReceipt={editing.hide_receipt}
+                onChanged={async () => {
+                  // an offset changes the payable amount: refresh the list and this dialog's numbers
+                  const { data } = await supabase.from('debts').select('amount, base_amount').eq('id', editing.id).single();
+                  if (data) {
+                    setEditing({ ...editing, amount: Number(data.amount), base_amount: data.base_amount == null ? null : Number(data.base_amount) });
+                    setEditAmount(String(data.base_amount ?? data.amount));
+                  }
+                  load();
+                }}
+              />
+            )}
 
             {editError && (
               <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12.5, marginTop: 12 }}>
@@ -898,6 +961,7 @@ export default function Debts() {
                 </Text>
               </Pressable>
             </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -925,6 +989,14 @@ export default function Debts() {
                 </Text>
               ))}
 
+            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.semibold, fontSize: 11.5, marginTop: 14, marginBottom: 6 }}>
+              {t('bill.choiceTitle')}
+            </Text>
+            <MergeChoice value={mergeKind} onChange={setMergeKind} compact noSeparate />
+            {mergeKind === 'bill' && (
+              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 8 }}>{t('bill.billIntro')}</Text>
+            )}
+
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 14, marginBottom: 6 }}>
               {t('debts.whoOwesLabel')}
             </Text>
@@ -934,15 +1006,19 @@ export default function Debts() {
               style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
             />
 
-            <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
-              {t('debts.amountLabel')}
-            </Text>
-            <TextInput
-              value={mergeAmount}
-              onChangeText={setMergeAmount}
-              keyboardType="numeric"
-              style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
-            />
+            {mergeKind === 'merge' && (
+              <>
+                <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
+                  {t('debts.amountLabel')}
+                </Text>
+                <TextInput
+                  value={mergeAmount}
+                  onChangeText={setMergeAmount}
+                  keyboardType="numeric"
+                  style={[styles.modalInput, { color: tokens.text, borderColor: tokens.border }]}
+                />
+              </>
+            )}
 
             <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12, marginTop: 12, marginBottom: 6 }}>
               {t('debts.messageLabel')}
@@ -971,7 +1047,7 @@ export default function Debts() {
                 style={[styles.modalBtn, { backgroundColor: tokens.accent, opacity: mergeSaving ? 0.6 : 1 }]}
               >
                 <Text style={{ color: tokens.accentText, fontFamily: fontFamily.bold, fontSize: 14 }}>
-                  {mergeSaving ? t('debts.merging') : t('debts.mergeConfirm')}
+                  {mergeSaving ? t('debts.merging') : mergeKind === 'bill' ? t('bill.createBill') : t('debts.mergeConfirm')}
                 </Text>
               </Pressable>
             </View>

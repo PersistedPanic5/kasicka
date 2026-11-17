@@ -7,6 +7,8 @@ import { useAuth } from '@/lib/auth-context';
 import { supabase } from '@/lib/supabase';
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import { ShareModePicker } from '@/components/ShareModePicker';
+import { DetailsFields, MergeChoice, type MergeKind } from '@/components/DebtExtras';
+import { FILE_ACCEPT, isPdf, uploadReceipt, type StagedFile } from '@/lib/debt-bill';
 import { createGroupDebts, groupProblem, type ShareMode } from '@/lib/debt-groups';
 import {
   createOrMergeDebtsForSplit,
@@ -33,8 +35,11 @@ export type Extras = {
   total: string;
   message: string;
   people: SplitPerson[];
-  /** names (trimmed, lower-case) the user chose NOT to fold into an open debt */
-  noMerge: string[];
+  /** per person (trimmed, lower-case name) with an open debt: merge / bill with details / keep separate. Default: merge, or bill when theirs already is one. */
+  kinds: Record<string, MergeKind>;
+  /** free-text details + attachments, put on every debt of the split */
+  details: string;
+  files: StagedFile[];
   shareMode: ShareMode;
 };
 
@@ -46,7 +51,9 @@ export const emptyExtras = (): Extras => ({
   total: '',
   message: '',
   people: [emptySplitPerson()],
-  noMerge: [],
+  kinds: {},
+  details: '',
+  files: [],
   shareMode: 'INDIVIDUAL',
 });
 
@@ -90,13 +97,19 @@ export async function applyExtras(p: {
       message: e.message.trim() || null,
       mode: e.shareMode as 'ONE_QR' | 'PER_PERSON',
       people,
+      details: e.details,
+      files: e.files,
     });
     return { debts: g.count, error: g.error ?? error };
   }
   if (e.splitOn && people.length && total > 0) {
-    const mergeNames = new Set(
-      people.map((x) => x.name.trim().toLowerCase()).filter((n) => p.history.outstandingByName.has(n) && !e.noMerge.includes(n)),
-    );
+    const kindOf = (n: string): MergeKind | null => {
+      const open = p.history.outstandingByName.get(n);
+      return open ? e.kinds[n] ?? (open.breakdown ? 'bill' : 'merge') : null;
+    };
+    const names = people.map((x) => x.name.trim().toLowerCase());
+    const mergeNames = new Set(names.filter((n) => kindOf(n) === 'merge'));
+    const billNames = new Set(names.filter((n) => kindOf(n) === 'bill'));
     const res = await createOrMergeDebtsForSplit({
       ownerId: p.ownerId,
       transactionId: p.transactionId,
@@ -106,6 +119,9 @@ export async function applyExtras(p: {
       people,
       outstandingByName: p.history.outstandingByName,
       mergeNames,
+      billNames,
+      details: e.details,
+      files: e.files,
       currencyLabel: p.currencyLabel,
     });
     if (res.error) error = res.error;
@@ -113,8 +129,6 @@ export async function applyExtras(p: {
   }
   return { debts: 0, error };
 }
-
-type Tokens = ReturnType<typeof useTheme>['tokens'];
 
 export function NoteField({ value, onChange }: { value: Extras; onChange: (e: Extras) => void }) {
   const { tokens } = useTheme();
@@ -147,19 +161,26 @@ export function PhotoField({ value, onChange }: { value: Extras; onChange: (e: E
     if (!file || !user) return;
     setError(null);
     setBusy(true);
-    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'jpg';
-    const path = `${user.id}/${Date.now()}.${ext}`;
-    const { error: err } = await supabase.storage.from('receipts').upload(path, file, { contentType: file.type || 'image/jpeg' });
+    try {
+      const up = await uploadReceipt(user.id, file);
+      onChange({ ...value, photoPath: up.path, photoUrl: isPdf(file.type) || isPdf(file.name) ? 'pdf' : URL.createObjectURL(file) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
     setBusy(false);
-    if (err) return setError(err.message);
-    onChange({ ...value, photoPath: path, photoUrl: URL.createObjectURL(file) });
   }
 
   return (
     <View style={{ gap: 8 }}>
       {value.photoUrl ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <Image source={{ uri: value.photoUrl }} style={s.preview} />
+          {value.photoUrl === 'pdf' ? (
+            <View style={[s.preview, { backgroundColor: tokens.cardAlt, alignItems: 'center', justifyContent: 'center' }]}>
+              <Text style={{ color: tokens.text, fontFamily: fontFamily.extrabold, fontSize: 13 }}>PDF</Text>
+            </View>
+          ) : (
+            <Image source={{ uri: value.photoUrl }} style={s.preview} />
+          )}
           <Pressable onPress={() => onChange({ ...value, photoPath: null, photoUrl: null })} style={s.small}>
             <Text style={{ color: tokens.coral, fontFamily: fontFamily.bold, fontSize: 13 }}>{t('common.delete')}</Text>
           </Pressable>
@@ -174,19 +195,8 @@ export function PhotoField({ value, onChange }: { value: Extras; onChange: (e: E
         </Pressable>
       )}
       {error && <Text style={{ color: tokens.coral, fontFamily: fontFamily.medium, fontSize: 12.5 }}>{error}</Text>}
-      {createElement('input', { ref, type: 'file', accept: 'image/*', capture: 'environment', style: { display: 'none' }, onChange: pick })}
+      {createElement('input', { ref, type: 'file', accept: FILE_ACCEPT, style: { display: 'none' }, onChange: pick })}
     </View>
-  );
-}
-
-function Tick({ on, label, onPress, tokens }: { on: boolean; label: string; onPress: () => void; tokens: Tokens }) {
-  return (
-    <Pressable onPress={onPress} accessibilityRole="checkbox" accessibilityState={{ checked: on }} style={s.tickRow}>
-      <View style={[s.box, { borderColor: on ? tokens.accent : tokens.border, backgroundColor: on ? tokens.accent : tokens.cardAlt }]}>
-        {on && <Text style={{ color: tokens.accentText, fontFamily: fontFamily.extrabold, fontSize: 12, lineHeight: 14 }}>✓</Text>}
-      </View>
-      <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13, flex: 1 }}>{label}</Text>
-    </Pressable>
   );
 }
 
@@ -240,6 +250,12 @@ export function SplitFields({
         placeholderTextColor={tokens.textMuted}
         style={field}
       />
+      <DetailsFields
+        details={value.details}
+        onDetails={(details) => onChange({ ...value, details })}
+        files={value.files}
+        onFiles={(files) => onChange({ ...value, files })}
+      />
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <Pressable
           onPress={() => onChange({ ...value, people: splitEvenly(total, value.people) })}
@@ -283,12 +299,16 @@ export function SplitFields({
               )}
             </View>
             {open && value.shareMode === 'INDIVIDUAL' && (
-              <Tick
-                tokens={tokens}
-                on={!value.noMerge.includes(key)}
-                label={t('bank.mergeInto').replace('{name}', open.owed_by_name).replace('{amount}', String(open.amount))}
-                onPress={() => onChange({ ...value, noMerge: value.noMerge.includes(key) ? value.noMerge.filter((n) => n !== key) : [...value.noMerge, key] })}
-              />
+              <View style={{ gap: 6 }}>
+                <Text style={[s.hint, { color: tokens.textMuted }]}>
+                  {t('bank.mergeInto').replace('{name}', open.owed_by_name).replace('{amount}', String(open.amount))}
+                </Text>
+                <MergeChoice
+                  compact
+                  value={value.kinds[key] ?? (open.breakdown ? 'bill' : 'merge')}
+                  onChange={(k) => onChange({ ...value, kinds: { ...value.kinds, [key]: k } })}
+                />
+              </View>
             )}
           </View>
         );

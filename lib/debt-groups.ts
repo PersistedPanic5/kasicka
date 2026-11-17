@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { supabase } from '@/lib/supabase';
+import { insertDebtFiles, type StagedFile } from '@/lib/debt-bill';
 
 /**
  * One bill, one link for the whole group (supabase/migrations/0019_group_bills.sql).
@@ -41,6 +42,8 @@ export async function createGroupDebts(p: {
   message: string | null;
   mode: Exclude<ShareMode, 'INDIVIDUAL'>;
   people: { name: string; amount: number }[];
+  details?: string | null;
+  files?: StagedFile[];
 }): Promise<{ groupToken: string | null; count: number; error: string | null }> {
   const perPerson = Math.max(...p.people.map((x) => x.amount));
   const { data: group, error } = await supabase
@@ -68,9 +71,11 @@ export async function createGroupDebts(p: {
         target_account_id: p.targetAccountId,
         message: p.message,
         group_id: group.id,
+        details: p.details?.trim() || null,
       }))
     )
     .select('id');
+  if (!debtErr) for (const d of debts ?? []) await insertDebtFiles(p.ownerId, d.id, p.files ?? []);
   if (debtErr) {
     await supabase.from('debt_groups').delete().eq('id', group.id); // nothing half-made
     return { groupToken: null, count: 0, error: debtErr.message };
