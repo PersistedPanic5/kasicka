@@ -18,7 +18,8 @@ import {
 import { NameAutocompleteInput } from '@/components/NameAutocompleteInput';
 import { categoryColor } from '@/lib/identity';
 import { budgetMonthForDate } from '@/lib/budget-month';
-import { FILE_ACCEPT, isPdf, uploadReceipt, type StagedFile } from '@/lib/debt-bill';
+import { DEBT_EDIT_COLUMNS, FILE_ACCEPT, isPdf, isUnpaid, uploadReceipt, type EditableDebt, type StagedFile } from '@/lib/debt-bill';
+import { DebtEditModal } from '@/components/DebtEditModal';
 import { DetailsFields, MergeChoice, type MergeKind } from '@/components/DebtExtras';
 import type { DebtStatus, EventRow } from '@/types/database';
 
@@ -44,7 +45,7 @@ interface MergeOfferMatch {
   existing: OutstandingDebtMatch;
 }
 
-type LinkedDebt = { id: string; owed_by_name: string; amount: number; status: DebtStatus; share_token: string };
+type LinkedDebt = EditableDebt & { merged_into_token: string | null };
 
 /**
  * THE edit menu for a real transaction — opened from Transactions,
@@ -147,14 +148,35 @@ export function TransactionEditor({
   // ── debts already linked to this expense ──────────────────────────
   const [debts, setDebts] = useState<LinkedDebt[]>([]);
   const [debtsLoading, setDebtsLoading] = useState(true);
+  // Which "merged" rows still sit inside an OPEN bill with details (those can be edited; plain merges can't).
+  const [openBills, setOpenBills] = useState<Set<string>>(new Set());
+  const [editingDebt, setEditingDebt] = useState<LinkedDebt | null>(null);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   async function loadDebts() {
     const { data } = await supabase
       .from('debts')
-      .select('id, owed_by_name, amount, status, share_token')
+      .select(`${DEBT_EDIT_COLUMNS}, merged_into_token`)
       .eq('transaction_id', tx.id)
       .order('created_at', { ascending: false });
-    setDebts((data as LinkedDebt[] | null) ?? []);
+    const rows = (data as LinkedDebt[] | null) ?? [];
+    setDebts(rows);
+    const tokens = rows.map((d) => d.merged_into_token).filter((x): x is string => !!x);
+    if (tokens.length) {
+      const { data: parents } = await supabase.from('debts').select('share_token, status').in('share_token', tokens).eq('breakdown', true);
+      setOpenBills(new Set((parents ?? []).filter((p) => isUnpaid(p.status)).map((p) => p.share_token)));
+    }
     setDebtsLoading(false);
+  }
+  async function deleteDebt(id: string) {
+    if (pendingDeleteId !== id) {
+      setPendingDeleteId(id);
+      setTimeout(() => setPendingDeleteId((cur) => (cur === id ? null : cur)), 3000);
+      return;
+    }
+    setPendingDeleteId(null);
+    await supabase.from('debts').delete().eq('id', id);
+    await loadDebts();
+    onChanged();
   }
   useEffect(() => {
     loadDebts();
@@ -462,20 +484,57 @@ export function TransactionEditor({
                   {debtsLoading ? (
                     <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 12.5 }}>{tr('common.loading')}</Text>
                   ) : (
-                    debts.map((d) => (
-                      <View key={d.id} style={[styles.existingDebtRow, { borderColor: tokens.border }]}>
-                        <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>{d.owed_by_name}</Text>
-                        <Text
-                          style={{
-                            color: d.status === 'SETTLED' ? tokens.greenFg : tokens.amberFg,
-                            fontFamily: fontFamily.medium,
-                            fontSize: 12.5,
-                          }}
-                        >
-                          {d.amount} {tr('common.czk')} · {debtStatusLabel(d.status)}
-                        </Text>
-                      </View>
-                    ))
+                    <>
+                      <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5, marginBottom: 6 }}>{tr('bill.splitEditHint')}</Text>
+                      {debts.map((d) => {
+                        const inOpenBill = d.status === 'MERGED' && !!d.merged_into_token && openBills.has(d.merged_into_token);
+                        const editable = isUnpaid(d.status) || inOpenBill;
+                        return (
+                          <View key={d.id} style={[styles.existingDebtRow, { borderColor: tokens.border, flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
+                              <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 13 }}>{d.owed_by_name}</Text>
+                              <Text
+                                style={{
+                                  color: d.status === 'SETTLED' ? tokens.greenFg : tokens.amberFg,
+                                  fontFamily: fontFamily.medium,
+                                  fontSize: 12.5,
+                                }}
+                              >
+                                {d.base_amount != null ? `${d.base_amount} → ${d.amount}` : d.amount} {tr('common.czk')} ·{' '}
+                                {inOpenBill ? tr('bill.billPart') : debtStatusLabel(d.status)}
+                              </Text>
+                            </View>
+                            {editable ? (
+                              <View style={{ flexDirection: 'row', gap: 8 }}>
+                                <Pressable onPress={() => setEditingDebt(d)} style={[styles.smallBtn, { backgroundColor: tokens.cardAlt }]}>
+                                  <Text style={{ color: tokens.text, fontFamily: fontFamily.semibold, fontSize: 12.5 }}>{tr('common.edit')}</Text>
+                                </Pressable>
+                                {!inOpenBill && (
+                                  <Pressable
+                                    onPress={() => deleteDebt(d.id)}
+                                    style={[styles.smallBtn, { backgroundColor: pendingDeleteId === d.id ? tokens.coral : tokens.cardAlt }]}
+                                  >
+                                    <Text
+                                      style={{
+                                        color: pendingDeleteId === d.id ? tokens.accentText : tokens.coral,
+                                        fontFamily: fontFamily.semibold,
+                                        fontSize: 12.5,
+                                      }}
+                                    >
+                                      {pendingDeleteId === d.id ? tr('common.confirmQuestion') : tr('common.delete')}
+                                    </Text>
+                                  </Pressable>
+                                )}
+                              </View>
+                            ) : (
+                              <Text style={{ color: tokens.textMuted, fontFamily: fontFamily.medium, fontSize: 11.5 }}>
+                                {d.status === 'SETTLED' ? tr('bill.lockedPaid') : tr('bill.mergedChild')}
+                              </Text>
+                            )}
+                          </View>
+                        );
+                      })}
+                    </>
                   )}
                 </>
               )}
@@ -621,6 +680,15 @@ export function TransactionEditor({
           </View>
         </View>
       </Modal>
+
+      <DebtEditModal
+        debt={editingDebt}
+        onClose={() => setEditingDebt(null)}
+        onChanged={() => {
+          loadDebts();
+          onChanged();
+        }}
+      />
 
       <Modal visible={mergeOffer !== null} transparent animationType="fade" onRequestClose={() => setMergeOffer(null)}>
         <View style={styles.modalOverlay}>
